@@ -118,6 +118,14 @@ df['input text'] = df['raw text'].apply(revise_typo)
 #################################
 df['sentiment label'] = df['input text'].apply(gen_senti_lbl)
 
+##################################
+""" Assign relation label """
+##################################
+# Task 1 has sentiment labels in 'raw label', but we use generated sentiment labels
+# Task 2 and 3 have relation labels in 'raw label'
+# Set relation label to 'nan' for task1, and use 'raw label' for task2 and task3
+df['relation label'] = df.apply(lambda row: 'nan' if row['task'] == 'task1' else str(row['raw label']), axis=1)
+
 #########################
 """ Assign Unique IDs """
 #########################

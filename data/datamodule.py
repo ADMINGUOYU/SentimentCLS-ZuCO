@@ -296,8 +296,8 @@ class ZuCoDataset(Dataset):
         prompt = list(zip(t_prompts, d_prompts, s_prompts))
         text_uid = df['text uid'].values.tolist()
 
-        sentiment_label  = df['sentiment label'].apply(lambda x: str(x)).values.tolist()
-        relation_label = df['relation label'].apply(lambda x: str(x)).values.tolist()
+        sentiment_label  = df['sentiment label'].values.tolist()
+        relation_label = df['relation label'].values.tolist()
         eeg = df['eeg'].tolist()
         mask = df['mask'].tolist()
         return {'eeg': eeg,                   # list[np.arrary], [(l, c),]

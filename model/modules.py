@@ -227,6 +227,7 @@ class Aligner(nn.Module):
         '''
         if x.shape[-1] == self.hidden_dim:
             x = self.in_proj(x)  # (n, l, e)
+        # crush it down to one embedding per input (shrink len)
         x_emb = self.cross_attn_x(self.q_x.expand(x.shape[0], -1, -1), x, mask)[0].squeeze()  # (n, e)
         return x, x_emb
     

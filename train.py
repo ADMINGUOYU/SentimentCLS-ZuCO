@@ -182,10 +182,10 @@ def parse_args():
         help='Accelerator type'
     )
     parser.add_argument(
-        '--devices',
+        '--device',
         type=int,
         default=1,
-        help='Number of devices to use'
+        help='GPU Index'
     )
     parser.add_argument(
         '--precision',
@@ -305,7 +305,7 @@ def main():
     print(f"Learning rate: {args.lr}")
     print(f"Max epochs: {args.max_epochs}")
     print(f"Accelerator: {args.accelerator}")
-    print(f"Devices: {args.devices}")
+    print(f"Device / GPU index: {args.device}")
     print(f"Precision: {args.precision}")
     print("=" * 80)
     
@@ -362,10 +362,14 @@ def main():
     
     # Initialize trainer
     print("\nInitializing trainer...")
+    if torch.cuda.is_available():
+        device = [args.device]
+    else:
+        device = 1
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
         accelerator=args.accelerator,
-        devices=args.devices,
+        devices=device,
         precision=args.precision,
         logger=logger,
         callbacks=callbacks,

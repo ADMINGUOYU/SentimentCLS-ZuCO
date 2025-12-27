@@ -134,10 +134,10 @@ def parse_args():
         help='Accelerator type'
     )
     parser.add_argument(
-        '--devices',
+        '--device',
         type=int,
         default=1,
-        help='Number of devices to use'
+        help='GPU Index'
     )
     parser.add_argument(
         '--precision',
@@ -293,7 +293,7 @@ class EmbeddingDataModule(L.LightningDataModule):
         for batch_idx, batch in enumerate(dataloader):
             # Extract required inputs with minimal processing
             eeg = batch['eeg'].to(device)  # (n, l, c)
-            prompts = batch['prompt']  # list of tuples
+            prompts = batch['prompt']  # list of lists of three prompts
             sentiment_label = batch['sentiment label']  # list of str
             
             # Use the simplified extract_embeddings method
@@ -396,7 +396,12 @@ def main():
     
     # Load pre-trained GLIM model
     print("\nLoading pre-trained GLIM model...")
-    glim_model = GLIM.load_from_checkpoint(args.glim_checkpoint)
+    if torch.cuda.is_available():
+        # make sure we put this model somewhere right
+        device = f"cuda:{args.device}"
+    else:
+        device = "cpu"
+    glim_model = GLIM.load_from_checkpoint(args.glim_checkpoint, map_location = device)
     glim_model.eval()
     print("GLIM model loaded successfully!")
     
@@ -482,10 +487,14 @@ def main():
     
     # Initialize trainer
     print("\nInitializing trainer...")
+    if torch.cuda.is_available():
+        device = [args.device]
+    else:
+        device = 1
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
         accelerator=args.accelerator,
-        devices=args.devices,
+        devices=device,
         precision=args.precision,
         logger=logger,
         callbacks=callbacks,

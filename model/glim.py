@@ -703,7 +703,7 @@ class GLIM(L.LightningModule):
         # Handle prompts
         if prompts is None:
             # Use default prompts if none provided
-            prompts = [('<UNK>', '<UNK>', '<UNK>')] * batch_size
+            prompts = [['<UNK>'] * batch_size, ['<UNK>'] * batch_size, ['<UNK>'] * batch_size]
         
         # Encode prompts
         prompt_ids = self.p_embedder.encode(prompts, device=self.device)  # (n, 3)

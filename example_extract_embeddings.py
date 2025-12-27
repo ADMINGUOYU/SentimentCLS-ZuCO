@@ -10,19 +10,19 @@ from model.glim import GLIM
 
 # Load pre-trained GLIM model
 print("Loading GLIM model...")
-model = GLIM.load_from_checkpoint('path/to/checkpoint.ckpt')
+model = GLIM.load_from_checkpoint('./checkpoints/glim-zuco-epoch=199-step=49600.ckpt', map_location = 'cuda:0')
 model.eval()
 
 # Example 1: Extract embeddings without mask (simplest usage)
 print("\n=== Example 1: Minimal usage (no masking) ===")
 
 # Your EEG data
-eeg_data = torch.randn(4, 1280, 128)  # (batch_size, seq_len, channels)
+eeg_data = torch.randn(12, 1280, 128).to(torch.device('cuda:0'))  # (batch_size, seq_len, channels)
 
 # Extract embeddings - no mask needed!
 # All timesteps are used for embedding extraction
 embeddings = model.extract_embeddings(eeg_data)
-print(f"Extracted embeddings shape: {embeddings.shape}")  # (4, 1024)
+print(f"Extracted embeddings shape: {embeddings.shape}")  # (12, 1024)
 
 
 # Example 2: Extract embeddings with custom prompts
@@ -30,15 +30,14 @@ print("\n=== Example 2: With custom prompts (no masking) ===")
 
 # Define prompts as list of tuples (task, dataset, subject)
 prompts = [
-    ('task1', 'ZuCo1', 'ZAB'),
-    ('task2', 'ZuCo2', 'ZDM'),
-    ('task1', 'ZuCo1', 'ZGW'),
-    ('task3', 'ZuCo2', 'ZKB')
+    ['<NR>','<NR>', '<NR>', '<TSR>', '<NR>','<NR>', '<NR>', '<TSR>', '<NR>','<NR>', '<NR>', '<TSR>'],
+    ['ZuCo1', 'ZuCo2', 'ZuCo1', 'ZuCo2', 'ZuCo1', 'ZuCo2', 'ZuCo1', 'ZuCo2', 'ZuCo1', 'ZuCo2', 'ZuCo1', 'ZuCo2'],
+    ['ZAB', 'ZDM', 'ZGW', 'ZKB', 'ZAB', 'ZDM', 'ZGW', 'ZKB', 'ZAB', 'ZDM', 'ZGW', 'ZKB']
 ]
 
 embeddings = model.extract_embeddings(eeg_data, prompts=prompts)
 print(f"Extracted embeddings shape: {embeddings.shape}")
-
+print(f"Extracted embeddings [ : ,  :  20]:\n{embeddings[ : ,  :  20]}")
 
 # Example 3: Use embeddings with MLP classifier
 print("\n=== Example 3: Use with MLP classifier (no masking) ===")
@@ -46,7 +45,7 @@ print("\n=== Example 3: Use with MLP classifier (no masking) ===")
 from model.sentiment_mlp import SentimentMLP
 
 # Load MLP classifier
-mlp = SentimentMLP(input_dim=1024, hidden_dims=[512, 256], num_classes=3)
+mlp = SentimentMLP(input_dim=1024, hidden_dims=[512, 256], num_classes=3).to(torch.device('cuda:0'))
 mlp.eval()
 
 # Extract embeddings - no mask needed

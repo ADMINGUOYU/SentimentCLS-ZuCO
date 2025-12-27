@@ -16,7 +16,7 @@ TARGET_KEYS = [
     'naive rewritten', 'naive simplified'
 ]
 TEST_SIZE = 0.2
-VAL_SIZE = 0.1
+VAL_SIZE = 0.1  # 10% of total data
 RANDOM_SEED = 42
 
 """
@@ -62,7 +62,9 @@ for key in TARGET_KEYS:
 # Split by text uid to ensure no data leakage
 unique_text_uids = df_merged['text uid'].unique()
 train_uids, test_uids = train_test_split(unique_text_uids, test_size=TEST_SIZE, random_state=RANDOM_SEED)
-train_uids, val_uids = train_test_split(train_uids, test_size=VAL_SIZE, random_state=RANDOM_SEED)
+# Calculate correct validation split size from remaining training data
+val_split_ratio = VAL_SIZE / (1 - TEST_SIZE)
+train_uids, val_uids = train_test_split(train_uids, test_size=val_split_ratio, random_state=RANDOM_SEED)
 
 def assign_phase(text_uid):
     if text_uid in train_uids:

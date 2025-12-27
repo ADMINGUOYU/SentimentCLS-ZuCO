@@ -42,7 +42,7 @@ Reads task material CSV files and generates sentiment labels:
 Combines EEG data with labels:
 - Merges EEG dataframe with labels dataframe on ('text', 'dataset', 'task')
 - Adds placeholder target text columns (uses input text as target for classification tasks)
-- **Splits data** into train/val/test sets (80%/10%/10%) by text_uid
+- **Splits data** into train/val/test sets (70%/10%/20%) by text_uid
 - Creates the final dataframe ready for training
 
 **Output**: `./data/tmp/zuco_merged.df`

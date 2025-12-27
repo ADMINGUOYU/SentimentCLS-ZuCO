@@ -11,23 +11,24 @@ The MLP sentiment classifier is a lightweight alternative to the full GLIM model
 
 ## Simplified Embedding Extraction
 
-GLIM now includes a simplified `extract_embeddings()` method that requires minimal setup:
+GLIM now includes a simplified `extract_embeddings()` method that requires minimal setup and applies **no masking** to ensure all timesteps are used:
 
 ```python
 # Load model
 model = GLIM.load_from_checkpoint('checkpoint.ckpt')
 model.eval()
 
-# Extract embeddings - that's it!
-embeddings = model.extract_embeddings(eeg_data, eeg_mask)
+# Extract embeddings - no mask needed!
+embeddings = model.extract_embeddings(eeg_data)
 
 # Optional: with custom prompts
 prompts = [('task1', 'ZuCo1', 'ZAB'), ...]
-embeddings = model.extract_embeddings(eeg_data, eeg_mask, prompts)
+embeddings = model.extract_embeddings(eeg_data, prompts=prompts)
 ```
 
 **Benefits:**
 - ✅ No need to call `setup()` method
+- ✅ **No masking applied** - all timesteps used for embedding extraction
 - ✅ No need for target text or labels
 - ✅ No complex batch dictionary handling
 - ✅ No tokenization required

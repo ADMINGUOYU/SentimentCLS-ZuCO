@@ -660,7 +660,7 @@ class GLIM(L.LightningModule):
         return probs
     
     @torch.no_grad()
-    def extract_embeddings(self, eeg, eeg_mask, prompts=None):
+    def extract_embeddings(self, eeg, eeg_mask=None, prompts=None):
         """
         Extract EEG embeddings with minimal setup and dependencies.
         
@@ -668,9 +668,13 @@ class GLIM(L.LightningModule):
         with the MLP classifier or other downstream tasks. It requires minimal
         setup and doesn't need target text or labels.
         
+        **Important**: For MLP classifier, no mask is applied to ensure all
+        timesteps are used for embedding extraction. If eeg_mask is provided,
+        it will be ignored and a full unmasked version will be used.
+        
         Args:
             eeg: EEG tensor of shape (batch_size, seq_len, channels)
-            eeg_mask: Mask tensor of shape (batch_size, seq_len)
+            eeg_mask: Optional mask tensor (will be ignored - no masking applied)
             prompts: Optional tuple of (task, dataset, subject) prompts.
                     If None, uses default prompts ('<UNK>', '<UNK>', '<UNK>')
         
@@ -679,33 +683,36 @@ class GLIM(L.LightningModule):
         
         Example:
             >>> # Simple usage without prompts
-            >>> embeddings = model.extract_embeddings(eeg_data, eeg_mask)
+            >>> embeddings = model.extract_embeddings(eeg_data)
             
             >>> # With custom prompts
             >>> prompts = [('task1', 'ZuCo1', 'ZAB'), ('task2', 'ZuCo2', 'ZDM')]
-            >>> embeddings = model.extract_embeddings(eeg_data, eeg_mask, prompts)
+            >>> embeddings = model.extract_embeddings(eeg_data, prompts=prompts)
         """
         # Ensure model is in eval mode
         self.eval()
         
         # Move inputs to device
         eeg = eeg.to(self.device)
-        eeg_mask = eeg_mask.to(self.device)
+        
+        # Create an all-ones mask (no masking) for the EEG encoder
+        # This ensures all timesteps are used for embedding extraction
+        batch_size, seq_len, _ = eeg.shape
+        eeg_mask_unmasked = torch.ones(batch_size, seq_len, dtype=torch.float32, device=self.device)
         
         # Handle prompts
         if prompts is None:
             # Use default prompts if none provided
-            batch_size = eeg.shape[0]
             prompts = [('<UNK>', '<UNK>', '<UNK>')] * batch_size
         
         # Encode prompts
         prompt_ids = self.p_embedder.encode(prompts, device=self.device)  # (n, 3)
         prompt_embed = self.p_embedder(prompt_ids, self.eval_pembed)  # (n, c)
         
-        # Encode EEG
-        eeg_hiddens, _ = self.eeg_encoder(eeg, eeg_mask, prompt_embed)
+        # Encode EEG without masking (use all-ones mask)
+        eeg_hiddens, _ = self.eeg_encoder(eeg, eeg_mask_unmasked, prompt_embed)
         
-        # Extract embeddings from aligner
-        _, eeg_emb_vector = self.aligner.embed_eeg(eeg_hiddens)
+        # Extract embeddings from aligner without masking
+        _, eeg_emb_vector = self.aligner.embed_eeg(eeg_hiddens, mask=None)
         
         return eeg_emb_vector

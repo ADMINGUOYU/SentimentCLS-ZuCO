@@ -11,6 +11,7 @@ import os
 import argparse
 from pathlib import Path
 from datetime import datetime
+from collections import Counter
 
 import torch
 import lightning as L
@@ -365,6 +366,93 @@ def custom_collate_fn(batch):
     }
 
 
+def display_label_distribution(datamodule, glim_model):
+    """Display sentiment label distribution in the training dataset."""
+    print("\n" + "=" * 80)
+    print("Sentiment Label Distribution in Training Data")
+    print("=" * 80)
+    
+    # Setup the base datamodule to access training data
+    datamodule.base_datamodule.setup('fit')
+    
+    # Get training dataset
+    train_dataset = datamodule.base_datamodule.train_set
+    
+    # Collect all sentiment labels
+    sentiment_labels = []
+    for i in range(len(train_dataset)):
+        sample = train_dataset[i]
+        sentiment_label = sample['sentiment label']
+        sentiment_labels.append(sentiment_label)
+    
+    # Encode labels to IDs using GLIM's encoder
+    sentiment_ids = glim_model.encode_labels(sentiment_labels).cpu().numpy()
+    
+    # Count the distribution
+    label_counts = Counter(sentiment_ids)
+    
+    # Map IDs to label names
+    id_to_label = {0: 'negative', 1: 'neutral', 2: 'positive'}
+    
+    print(f"\nTotal samples: {len(sentiment_ids)}")
+    print("\nLabel distribution:")
+    for label_id in sorted(label_counts.keys()):
+        label_name = id_to_label.get(label_id, f'unknown({label_id})')
+        count = label_counts[label_id]
+        percentage = (count / len(sentiment_ids)) * 100
+        print(f"  {label_name} (ID: {label_id}): {count} samples ({percentage:.2f}%)")
+    
+    print("=" * 80)
+
+
+def display_confusion_matrix(mlp_model):
+    """Display the confusion matrix after testing."""
+    if not hasattr(mlp_model, 'confusion_matrix'):
+        print("\nWarning: No confusion matrix found. Make sure test() was called.")
+        return
+    
+    cm = mlp_model.confusion_matrix
+    
+    print("\n" + "=" * 80)
+    print("Confusion Matrix (Test Set)")
+    print("=" * 80)
+    print("\nRows represent true labels, columns represent predictions")
+    print(f"Label mapping: 0=negative, 1=neutral, 2=positive\n")
+    
+    # Print column headers
+    print("           Predicted")
+    print("         ", end="")
+    for i in range(3):
+        print(f"{i:>8}", end="")
+    print()
+    
+    # Print matrix with row labels
+    print("Actual")
+    for i, row in enumerate(cm):
+        print(f"  {i}   ", end="")
+        for val in row:
+            print(f"{val:>8}", end="")
+        print()
+    
+    # Calculate per-class metrics
+    print("\nPer-class metrics:")
+    label_names = ['negative', 'neutral', 'positive']
+    for i, label_name in enumerate(label_names):
+        # True positives, false positives, false negatives
+        tp = cm[i, i]
+        fp = cm[:, i].sum() - tp
+        fn = cm[i, :].sum() - tp
+        
+        # Precision, recall, F1
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        
+        print(f"  {label_name}: Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
+    
+    print("=" * 80)
+
+
 def main():
     """Main training function."""
     args = parse_args()
@@ -434,6 +522,9 @@ def main():
         cache_dir=args.embeddings_cache_dir,
         force_recompute=args.force_recompute
     )
+    
+    # Display sentiment label distribution before training
+    display_label_distribution(embedding_datamodule, glim_model)
     
     # Initialize MLP model
     print("\nInitializing MLP sentiment classifier...")
@@ -523,6 +614,9 @@ def main():
         print("\nRunning test evaluation on best model...")
         trainer.test(mlp_model, embedding_datamodule, 
                     ckpt_path=trainer.checkpoint_callback.best_model_path)
+        
+        # Display confusion matrix after testing
+        display_confusion_matrix(mlp_model)
 
 
 if __name__ == '__main__':

@@ -175,6 +175,13 @@ def parse_args():
         help='Number of data loading workers'
     )
     
+    # Class imbalance handling
+    parser.add_argument(
+        '--use_weighted_sampler',
+        action='store_true',
+        help='Use weighted random sampler to handle class imbalance in training data'
+    )
+    
     return parser.parse_args()
 
 
@@ -185,7 +192,7 @@ class EmbeddingDataModule(L.LightningDataModule):
     """
     
     def __init__(self, glim_model, base_datamodule, batch_size=64, num_workers=4, 
-                 cache_dir=None, force_recompute=False):
+                 cache_dir=None, force_recompute=False, use_weighted_sampler=False):
         super().__init__()
         self.glim_model = glim_model
         self.base_datamodule = base_datamodule
@@ -193,6 +200,7 @@ class EmbeddingDataModule(L.LightningDataModule):
         self.num_workers = num_workers
         self.cache_dir = cache_dir
         self.force_recompute = force_recompute
+        self.use_weighted_sampler = use_weighted_sampler
         
         # Create cache directory if specified
         if self.cache_dir:
@@ -323,15 +331,63 @@ class EmbeddingDataModule(L.LightningDataModule):
         dataset = torch.utils.data.TensorDataset(all_embeddings, all_sentiment_ids)
         return dataset
     
+    def _compute_sample_weights(self, sentiment_ids):
+        """
+        Compute sample weights for weighted random sampling to handle class imbalance.
+        
+        Args:
+            sentiment_ids: Tensor of sentiment label IDs
+            
+        Returns:
+            Tensor of sample weights, one per sample
+        """
+        # Count samples per class
+        unique_labels, counts = torch.unique(sentiment_ids, return_counts=True)
+        
+        # Compute class weights (inverse frequency)
+        total_samples = len(sentiment_ids)
+        class_weights = total_samples / (len(unique_labels) * counts.float())
+        
+        # Create a mapping from label to weight
+        label_to_weight = {label.item(): weight.item() for label, weight in zip(unique_labels, class_weights)}
+        
+        # Assign weight to each sample based on its label
+        sample_weights = torch.tensor([label_to_weight[label.item()] for label in sentiment_ids])
+        
+        return sample_weights
+    
     def train_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.train_embeddings,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            collate_fn=custom_collate_fn
-        )
+        if self.use_weighted_sampler:
+            # Extract sentiment IDs from the dataset
+            sentiment_ids = torch.stack([self.train_embeddings[i][1] for i in range(len(self.train_embeddings))])
+            
+            # Compute sample weights
+            sample_weights = self._compute_sample_weights(sentiment_ids)
+            
+            # Create weighted random sampler
+            sampler = torch.utils.data.WeightedRandomSampler(
+                weights=sample_weights,
+                num_samples=len(sample_weights),
+                replacement=True
+            )
+            
+            return torch.utils.data.DataLoader(
+                self.train_embeddings,
+                batch_size=self.batch_size,
+                sampler=sampler,  # Use sampler instead of shuffle
+                num_workers=self.num_workers,
+                pin_memory=True,
+                collate_fn=custom_collate_fn
+            )
+        else:
+            return torch.utils.data.DataLoader(
+                self.train_embeddings,
+                batch_size=self.batch_size,
+                shuffle=True,
+                num_workers=self.num_workers,
+                pin_memory=True,
+                collate_fn=custom_collate_fn
+            )
     
     def val_dataloader(self):
         return torch.utils.data.DataLoader(
@@ -366,7 +422,7 @@ def custom_collate_fn(batch):
     }
 
 
-def display_label_distribution(datamodule, glim_model):
+def display_label_distribution(datamodule, glim_model, use_weighted_sampler=False):
     """Display sentiment label distribution in the training dataset."""
     print("\n" + "=" * 80)
     print("Sentiment Label Distribution in Training Data")
@@ -401,6 +457,17 @@ def display_label_distribution(datamodule, glim_model):
         count = label_counts[label_id]
         percentage = (count / len(sentiment_ids)) * 100
         print(f"  {label_name} (ID: {label_id}): {count} samples ({percentage:.2f}%)")
+    
+    # Display class weights if weighted sampler is enabled
+    if use_weighted_sampler:
+        print("\nWeighted sampling enabled - computed class weights:")
+        total_samples = len(sentiment_ids)
+        num_classes = len(label_counts)
+        for label_id in sorted(label_counts.keys()):
+            label_name = id_to_label.get(label_id, f'unknown({label_id})')
+            count = label_counts[label_id]
+            class_weight = total_samples / (num_classes * count)
+            print(f"  {label_name} (ID: {label_id}): weight = {class_weight:.4f}")
     
     print("=" * 80)
 
@@ -513,6 +580,8 @@ def main():
     print(f"Embeddings cache directory: {args.embeddings_cache_dir}")
     if args.force_recompute:
         print("Force recompute enabled - will ignore cached embeddings")
+    if args.use_weighted_sampler:
+        print("Weighted random sampler enabled - will balance class distribution during training")
     
     embedding_datamodule = EmbeddingDataModule(
         glim_model=glim_model,
@@ -520,11 +589,12 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         cache_dir=args.embeddings_cache_dir,
-        force_recompute=args.force_recompute
+        force_recompute=args.force_recompute,
+        use_weighted_sampler=args.use_weighted_sampler
     )
     
     # Display sentiment label distribution before training
-    display_label_distribution(embedding_datamodule, glim_model)
+    display_label_distribution(embedding_datamodule, glim_model, args.use_weighted_sampler)
     
     # Initialize MLP model
     print("\nInitializing MLP sentiment classifier...")

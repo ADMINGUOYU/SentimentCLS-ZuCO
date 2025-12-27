@@ -20,7 +20,7 @@ VAL_SIZE = 0.1  # 10% of total data
 RANDOM_SEED = 42
 
 """
-Merge the EEG data with the sentiment and relation labels.
+Merge the EEG data with the sentiment labels.
 This script assumes that:
 1. preprocess_mat.py has been run to generate zuco_eeg_128ch_1280len.df
 2. preprocess_gen_lbl.py has been run to generate zuco_label_input_text.df
@@ -42,7 +42,7 @@ df_eeg['text'] = df_eeg['text'].apply(revise_typo)
 # Merge the dataframes on 'text', 'dataset', 'task', and 'subject'
 # The EEG data uses 'text' column, while labels use 'input text'
 df_merged = pd.merge(df_eeg, 
-                     df_labels[['input text', 'sentiment label', 'relation label', 'text uid', 'dataset', 'task']], 
+                     df_labels[['input text', 'sentiment label', 'text uid', 'dataset', 'task']], 
                      left_on=['text', 'dataset', 'task'], 
                      right_on=['input text', 'dataset', 'task'], 
                      how='inner')

@@ -72,25 +72,19 @@ Generated automatically using sentiment analysis pipeline:
 - **"neutral"** - neutral sentiment  
 - **"positive"** - positive sentiment
 
-### Relation Labels (task2 and task3 only)
-From original ZuCo dataset:
-- "awarding", "education", "employment", "foundation", "job title", "nationality", "political affiliation", "visit", "marriage"
-- Set to **"nan"** for task1 (which has no relation labels)
-
 ## Model
 
 The model (`model/glim.py`) is adapted for sentiment classification:
 - `encode_labels()` method converts text labels to integer IDs
 - `run_sentiment_cls()` performs sentiment classification using contrastive learning
-- `run_relation_cls()` performs relation classification (for task2/task3)
-- Both classification tasks use the aligned EEG-text embeddings
+- Uses aligned EEG-text embeddings for classification
 
 ## Dataset and Dataloader
 
 The dataloader (`data/datamodule.py`):
 - Reads the merged pickle file
 - Creates train/val/test datasets based on the 'phase' column
-- Returns batches with EEG signals, text, and labels (both sentiment and relation)
+- Returns batches with EEG signals, text, and sentiment labels
 - Uses custom `GLIMSampler` to ensure unique texts per batch for contrastive learning
 
 ## Training
@@ -175,9 +169,8 @@ python train.py --resume_from_checkpoint ./checkpoints/sentiment_classification/
 
 The model is evaluated on:
 1. **Sentiment Classification**: Accuracy on all tasks (task1, task2, task3)
-2. **Relation Classification**: Accuracy on task2 and task3
-3. **Text Generation**: BLEU, ROUGE scores for paraphrase generation
-4. **Retrieval**: EEG-text retrieval accuracy
+2. **Text Generation**: BLEU, ROUGE scores for paraphrase generation
+3. **Retrieval**: EEG-text retrieval accuracy
 
 Metrics are logged per-task and averaged across all tasks.
 

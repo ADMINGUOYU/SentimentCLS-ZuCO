@@ -297,7 +297,6 @@ class ZuCoDataset(Dataset):
         text_uid = df['text uid'].values.tolist()
 
         sentiment_label  = df['sentiment label'].values.tolist()
-        relation_label = df['relation label'].values.tolist()
         eeg = df['eeg'].tolist()
         mask = df['mask'].tolist()
         return {'eeg': eeg,                   # list[np.arrary], [(l, c),]
@@ -307,7 +306,6 @@ class ZuCoDataset(Dataset):
                 'input text': input_text,     # str
                 'target text': target_text,   # str
                 'sentiment label': sentiment_label,                         # str
-                'relation label': relation_label,                           # str
                 'raw task key': raw_t_keys,                                 # str
                 'raw input text': raw_input_text,                           # str
                 }
@@ -324,7 +322,6 @@ class ZuCoDataset(Dataset):
                 'input text': self.data['input text'][idx],     # str
                 'target text': self.data['target text'][idx],   # str
                 'sentiment label': self.data['sentiment label'][idx], # str
-                'relation label': self.data['relation label'][idx],   # str
                 'raw task key': self.data['raw task key'][idx],         # str
                 'raw input text': self.data['raw input text'][idx],     # str
                 'all target texts': self.data['all target texts'][idx],   # tuple(str)

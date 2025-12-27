@@ -85,9 +85,6 @@ class GLIM(L.LightningModule):
         # for logging and classification
         self.raw_task_keys = ['task1', 'task2', 'task3']
         self.sentiment_labels = ['negative', 'neutral', 'positive']
-        self.relation_labels = ['awarding', 'education', 'employment',
-                                'foundation', 'job title', 'nationality', 
-                                'political affiliation','visit', 'marriage']
         
         self.p_embedder = PromptEmbedder(input_dim, 
                                          prompt_nums, prompt_dropout_probs, self.prompt_keys)
@@ -146,12 +143,10 @@ class GLIM(L.LightningModule):
     def encode_labels(self, labels:list[str], ignore_idx=-1):
         label_ids = []
         for label in labels:
-            if label in self.relation_labels:
-                label_id = self.relation_labels.index(label)
-            elif label in self.sentiment_labels:
+            if label in self.sentiment_labels:
                 label_id = self.sentiment_labels.index(label)
             else:
-                assert label == 'nan'
+                # Handle any unexpected labels
                 label_id = ignore_idx
             label_ids.append(label_id)
         label_ids = torch.tensor(label_ids, dtype=torch.int, device=self.device)
@@ -165,7 +160,6 @@ class GLIM(L.LightningModule):
         tgt_text = batch['target text']         # list[str]
         # for logging and cal metrics
         sentiment_label = batch['sentiment label']      # list[str]
-        relation_label = batch['relation label']      # list[str]
         raw_task_key = batch['raw task key']    # list[str]
         raw_task_ids = torch.tensor([self.raw_task_keys.index(key) for key in raw_task_key],
                                     dtype=torch.int,device=self.device)
@@ -177,12 +171,11 @@ class GLIM(L.LightningModule):
         input_ids, input_mask = self.tokenize(input_text, self.input_text_len-self.prompt_tuning_len)
         tgt_ids, _ = self.tokenize(tgt_text, self.tgt_text_len)
         sentiment_ids = self.encode_labels(sentiment_label)
-        relation_ids = self.encode_labels(relation_label)
 
         return (eeg, eeg_mask, prompt_embed, 
                 input_ids, input_mask, tgt_ids,
                 prompt_ids, raw_task_ids, 
-                sentiment_ids, relation_ids,
+                sentiment_ids,
                 tgt_text, raw_input_text, all_target_texts)
     
     def encode_text(self, src_ids, src_mask):
@@ -211,7 +204,7 @@ class GLIM(L.LightningModule):
         (eeg, eeg_mask, prompt_embed, 
          input_text_ids, input_text_mask, target_text_ids, 
          prompt_ids, raw_task_ids, 
-         sentiment_ids, relation_ids,
+         sentiment_ids,
          target_text, raw_input_text, all_target_texts) = self.get_inputs(batch)
      
         input_text_embeds, hidden_text_mask = self.encode_text(input_text_ids, input_text_mask)
@@ -238,7 +231,6 @@ class GLIM(L.LightningModule):
                 'prompt_ids': prompt_ids,                      # (n, 3)
                 'raw_task_ids': raw_task_ids,                  # (n)
                 'sentiment_ids': sentiment_ids,    # (n)
-                'relation_ids': relation_ids,      # (n)
                 ### for cal metrics
                 'raw_input_text': raw_input_text,              # list[str]
                 'all_target_texts': all_target_texts,          # list[tuple[str]]
@@ -343,7 +335,6 @@ class GLIM(L.LightningModule):
                              'prompt_ids': shared_outputs['prompt_ids'],            # (n, 3)
                              'raw_task_ids': shared_outputs['raw_task_ids'],        # (n)
                              'sentiment_ids': shared_outputs['sentiment_ids'],  # (n)
-                             'relation_ids': shared_outputs['relation_ids'],  # (n)
                              }
         
         raw_input_ids, _ = self.tokenize(shared_outputs['raw_input_text'], self.input_text_len)   # (n, l)
@@ -483,19 +474,6 @@ class GLIM(L.LightningModule):
         labels, prob_dicts = self.collect_cls_preds(probs, target_ids, self.sentiment_labels)
         return accs, labels, prob_dicts
     
-    def run_relation_cls(self, intermediates: dict, candi_emb_vector: Tensor):
-        eeg_emb_vector = intermediates['eeg_emb_vector']       
-        probs = self.run_cls(eeg_emb_vector, candi_emb_vector) # (n, c)
-        c = candi_emb_vector.shape[0]
-        assert c == probs.shape[1] 
-        target_ids = intermediates['relation_ids']
-        acc_top1 = multiclass_accuracy(probs, target_ids, average='micro', num_classes=c, ignore_index=-1, top_k=1)
-        acc_top3 = multiclass_accuracy(probs, target_ids, average='micro', num_classes=c, ignore_index=-1, top_k=3)
-        accs = {'relation_cls_acc_top01': acc_top1,
-                'relation_cls_acc_top03': acc_top3}
-        labels, prob_dicts = self.collect_cls_preds(probs, target_ids, self.relation_labels)
-        return accs, labels, prob_dicts
-    
     def run_corpus_cls(self, intermediates: dict, candi_emb_vector: Tensor):
         eeg_emb_vector = intermediates['eeg_emb_vector']       
         probs = self.run_cls(eeg_emb_vector, candi_emb_vector) # (n, c)
@@ -508,15 +486,13 @@ class GLIM(L.LightningModule):
     def cal_and_log(self, outputs, prefix='full_val'):
         # pre-calculate embeddings of labels for classification
         se_label_embs = self.cal_label_embs(self.sentiment_labels, template="Sentiment classification: It is <MASK>.")
-        re_label_embs = self.cal_label_embs(self.relation_labels, template="Relation classification: It is about <MASK>.")
         co_label_embs = self.cal_label_embs(labels=["The topic is about: movie, good or bad", 
                                                     "The topic is about: life experiences, relationship"])
         
         # cal overall classification metrics (micro)
         se_accs, se_labels, se_prob_dicts = self.run_sentiment_cls(outputs, se_label_embs)
-        re_accs, re_labels, re_prob_dicts = self.run_relation_cls(outputs, re_label_embs)
         co_acc = self.run_corpus_cls(outputs, co_label_embs)
-        mean_metrics = {**se_accs, **re_accs, **co_acc}
+        mean_metrics = {**se_accs, **co_acc}
         mean_metrics = {f"{prefix}/mean_{k}":v for k,v in mean_metrics.items()}
 
         # cal group/sample-level meterics (generation, classification, retrieval)
@@ -574,9 +550,8 @@ class GLIM(L.LightningModule):
 
             # classification accs and predictions 
             se_accs, se_labels, se_prob_dicts = self.run_sentiment_cls(intermediates, se_label_embs)
-            re_accs, re_labels, re_prob_dicts = self.run_relation_cls(intermediates, re_label_embs)
             co_acc = self.run_corpus_cls(intermediates, co_label_embs)
-            group_metrics.update({**se_accs, **re_accs, **co_acc})
+            group_metrics.update({**se_accs, **co_acc})
 
             all_group_metrics.update({f"{prefix}/{k}-{group_key}":v 
                                       for k,v in group_metrics.items()})
@@ -601,7 +576,6 @@ class GLIM(L.LightningModule):
                     'Bleu3': gen_metrics['bleu3_gen'][i], 'Bleu4': gen_metrics['bleu4_gen'][i], 
                     
                     'Sentiment label': se_labels[i], 'Sentiment Predictions': se_prob_dicts[i], 
-                    'Relation label': re_labels[i], 'Relation Predictions': re_prob_dicts[i], 
 
                     'Target Text (Current epoch)': tf_tgt_strs[i], 'Generated Text (w/tf)': tf_strs[i], 
                     'Bleu1 (w/tf)': gen_metrics['bleu1_tf'][i], 'Bleu2 (w/tf)': gen_metrics['bleu2_tf'][i], 

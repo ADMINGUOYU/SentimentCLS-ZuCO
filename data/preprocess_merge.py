@@ -1,6 +1,23 @@
 import numpy as np
 import pandas as pd
+import sys
+import os
 from sklearn.model_selection import train_test_split
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(__file__))
+from preprocess_gen_lbl import revise_typo
+
+# Configuration constants
+TARGET_KEYS = [
+    'lexical simplification (v0)', 'lexical simplification (v1)', 
+    'semantic clarity (v0)', 'semantic clarity (v1)', 
+    'syntax simplification (v0)', 'syntax simplification (v1)',
+    'naive rewritten', 'naive simplified'
+]
+TEST_SIZE = 0.2
+VAL_SIZE = 0.1
+RANDOM_SEED = 42
 
 """
 Merge the EEG data with the sentiment and relation labels.
@@ -20,8 +37,6 @@ print(f"Loaded label data: {df_labels.shape[0]} rows")
 print(f"Label columns: {df_labels.columns.tolist()}")
 
 # Apply the same typo corrections to the EEG text column
-# Import the typo correction function from preprocess_gen_lbl
-from preprocess_gen_lbl import revise_typo
 df_eeg['text'] = df_eeg['text'].apply(revise_typo)
 
 # Merge the dataframes on 'text', 'dataset', 'task', and 'subject'
@@ -40,18 +55,14 @@ df_merged = df_merged.drop(['text'], axis=1)
 
 # Add target text columns - for sentiment classification, we use input text as target
 # These columns are needed by the dataloader for paraphrasing evaluation
-target_keys = ['lexical simplification (v0)', 'lexical simplification (v1)', 
-               'semantic clarity (v0)', 'semantic clarity (v1)', 
-               'syntax simplification (v0)', 'syntax simplification (v1)',
-               'naive rewritten', 'naive simplified']
-for key in target_keys:
+for key in TARGET_KEYS:
     df_merged[key] = df_merged['input text']
 
 # Assign train/val/test split
 # Split by text uid to ensure no data leakage
 unique_text_uids = df_merged['text uid'].unique()
-train_uids, test_uids = train_test_split(unique_text_uids, test_size=0.2, random_state=42)
-train_uids, val_uids = train_test_split(train_uids, test_size=0.1, random_state=42)
+train_uids, test_uids = train_test_split(unique_text_uids, test_size=TEST_SIZE, random_state=RANDOM_SEED)
+train_uids, val_uids = train_test_split(train_uids, test_size=VAL_SIZE, random_state=RANDOM_SEED)
 
 def assign_phase(text_uid):
     if text_uid in train_uids:
@@ -70,4 +81,5 @@ print(f"Columns: {df_merged.columns.tolist()}")
 # Save the merged dataframe
 pd.to_pickle(df_merged, './data/tmp/zuco_merged.df')
 print("Saved merged data to ./data/tmp/zuco_merged.df")
+
 

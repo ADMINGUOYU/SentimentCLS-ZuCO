@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 from torchmetrics.functional.classification import multiclass_accuracy
+from sklearn.metrics import confusion_matrix
+import numpy as np
 
 
 class SentimentMLP(L.LightningModule):
@@ -47,6 +49,12 @@ class SentimentMLP(L.LightningModule):
         
         # Define sentiment labels
         self.sentiment_labels = ['negative', 'neutral', 'positive']
+        
+        # Initialize lists to accumulate training metrics per epoch
+        self.training_step_outputs = []
+        
+        # Initialize lists to accumulate test predictions and targets for confusion matrix
+        self.test_step_outputs = []
         
         # Build MLP layers
         layers = []
@@ -100,11 +108,29 @@ class SentimentMLP(L.LightningModule):
                                   ignore_index=-1,
                                   top_k=1)
         
-        # Log metrics
-        self.log('train/loss', loss, prog_bar=True, sync_dist=True)
-        self.log('train/accuracy', acc, prog_bar=True, sync_dist=True)
+        # Store metrics for epoch-level logging
+        self.training_step_outputs.append({
+            'loss': loss.detach(),
+            'accuracy': acc.detach()
+        })
         
         return loss
+    
+    def on_train_epoch_end(self):
+        """Compute and log average metrics at the end of each training epoch."""
+        if len(self.training_step_outputs) == 0:
+            return
+        
+        # Compute average loss and accuracy
+        avg_loss = torch.stack([x['loss'] for x in self.training_step_outputs]).mean()
+        avg_acc = torch.stack([x['accuracy'] for x in self.training_step_outputs]).mean()
+        
+        # Log to tensorboard
+        self.log('train/loss', avg_loss, prog_bar=True, sync_dist=True)
+        self.log('train/accuracy', avg_acc, prog_bar=True, sync_dist=True)
+        
+        # Clear for next epoch
+        self.training_step_outputs.clear()
     
     def validation_step(self, batch, batch_idx):
         """Validation step."""
@@ -157,7 +183,31 @@ class SentimentMLP(L.LightningModule):
         self.log('test/loss', loss, sync_dist=True)
         self.log('test/accuracy', acc, sync_dist=True)
         
+        # Store predictions and targets for confusion matrix
+        self.test_step_outputs.append({
+            'predictions': preds.detach().cpu(),
+            'targets': sentiment_ids.detach().cpu()
+        })
+        
         return {'loss': loss, 'accuracy': acc, 'predictions': preds, 'targets': sentiment_ids}
+    
+    def on_test_epoch_end(self):
+        """Compute confusion matrix at the end of testing."""
+        if len(self.test_step_outputs) == 0:
+            return
+        
+        # Concatenate all predictions and targets
+        all_preds = torch.cat([x['predictions'] for x in self.test_step_outputs])
+        all_targets = torch.cat([x['targets'] for x in self.test_step_outputs])
+        
+        # Compute confusion matrix
+        cm = confusion_matrix(all_targets.numpy(), all_preds.numpy(), labels=[0, 1, 2])
+        
+        # Store confusion matrix for later display (will be accessed in train_mlp.py)
+        self.confusion_matrix = cm
+        
+        # Clear for next test run
+        self.test_step_outputs.clear()
     
     def predict_step(self, batch, batch_idx):
         """Prediction step."""

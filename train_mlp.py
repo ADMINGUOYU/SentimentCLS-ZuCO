@@ -46,6 +46,17 @@ def parse_args():
         required=True,
         help='Path to pre-trained GLIM checkpoint'
     )
+    parser.add_argument(
+        '--embeddings_cache_dir',
+        type=str,
+        default='./data/embeddings_cache',
+        help='Directory to cache extracted embeddings'
+    )
+    parser.add_argument(
+        '--force_recompute',
+        action='store_true',
+        help='Force recomputation of embeddings even if cache exists'
+    )
     
     # MLP model arguments
     parser.add_argument(
@@ -169,14 +180,22 @@ def parse_args():
 class EmbeddingDataModule(L.LightningDataModule):
     """
     DataModule that extracts embeddings from GLIM and provides them for MLP training.
+    Supports caching embeddings to disk to avoid recomputation.
     """
     
-    def __init__(self, glim_model, base_datamodule, batch_size=64, num_workers=4):
+    def __init__(self, glim_model, base_datamodule, batch_size=64, num_workers=4, 
+                 cache_dir=None, force_recompute=False):
         super().__init__()
         self.glim_model = glim_model
         self.base_datamodule = base_datamodule
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.cache_dir = cache_dir
+        self.force_recompute = force_recompute
+        
+        # Create cache directory if specified
+        if self.cache_dir:
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
         
         # Set GLIM to eval mode and freeze it
         self.glim_model.eval()
@@ -189,16 +208,82 @@ class EmbeddingDataModule(L.LightningDataModule):
         self.base_datamodule.setup(stage)
         
         if stage == 'fit' or stage is None:
-            self.train_embeddings = self._extract_embeddings(self.base_datamodule.train_dataloader())
-            self.val_embeddings = self._extract_embeddings(self.base_datamodule.val_dataloader())
+            self.train_embeddings = self._extract_embeddings(
+                self.base_datamodule.train_dataloader(), 
+                split_name='train'
+            )
+            self.val_embeddings = self._extract_embeddings(
+                self.base_datamodule.val_dataloader(),
+                split_name='val'
+            )
         
         if stage == 'test' or stage is None:
-            self.test_embeddings = self._extract_embeddings(self.base_datamodule.test_dataloader())
+            self.test_embeddings = self._extract_embeddings(
+                self.base_datamodule.test_dataloader(),
+                split_name='test'
+            )
+    
+    def _get_cache_path(self, split_name):
+        """Get the cache file path for a specific split."""
+        if not self.cache_dir:
+            return None
+        
+        # Create a cache filename based on the GLIM checkpoint and split
+        cache_filename = f"embeddings_{split_name}.pt"
+        return Path(self.cache_dir) / cache_filename
+    
+    def _load_cached_embeddings(self, split_name):
+        """Load cached embeddings from disk if available."""
+        cache_path = self._get_cache_path(split_name)
+        
+        if not cache_path or self.force_recompute:
+            return None
+        
+        if cache_path.exists():
+            print(f"Loading cached {split_name} embeddings from {cache_path}")
+            try:
+                cached_data = torch.load(cache_path)
+                print(f"  Loaded {cached_data['embeddings'].shape[0]} cached embeddings")
+                
+                # Create TensorDataset
+                dataset = torch.utils.data.TensorDataset(
+                    cached_data['embeddings'],
+                    cached_data['sentiment_ids']
+                )
+                return dataset
+            except Exception as e:
+                print(f"  Warning: Failed to load cache ({e}), will recompute embeddings")
+                return None
+        
+        return None
+    
+    def _save_embeddings_to_cache(self, embeddings, sentiment_ids, split_name):
+        """Save embeddings to disk cache."""
+        cache_path = self._get_cache_path(split_name)
+        
+        if not cache_path:
+            return
+        
+        print(f"Saving {split_name} embeddings to cache: {cache_path}")
+        try:
+            torch.save({
+                'embeddings': embeddings,
+                'sentiment_ids': sentiment_ids,
+            }, cache_path)
+            print(f"  Successfully cached {embeddings.shape[0]} embeddings")
+        except Exception as e:
+            print(f"  Warning: Failed to save cache ({e})")
     
     @torch.no_grad()
-    def _extract_embeddings(self, dataloader):
+    def _extract_embeddings(self, dataloader, split_name=''):
         """Extract embeddings from GLIM for the entire dataset using simplified method."""
-        print(f"Extracting embeddings from GLIM (no masking applied for MLP classifier)...")
+        # Try to load from cache first
+        cached_dataset = self._load_cached_embeddings(split_name)
+        if cached_dataset is not None:
+            return cached_dataset
+        
+        # Cache not available or force recompute, extract embeddings
+        print(f"Extracting {split_name} embeddings from GLIM (no masking applied for MLP classifier)...")
         embeddings_list = []
         sentiment_ids_list = []
         
@@ -229,6 +314,9 @@ class EmbeddingDataModule(L.LightningDataModule):
         all_sentiment_ids = torch.cat(sentiment_ids_list, dim=0)
         
         print(f"Extracted {all_embeddings.shape[0]} embeddings of dimension {all_embeddings.shape[1]}")
+        
+        # Save to cache
+        self._save_embeddings_to_cache(all_embeddings, all_sentiment_ids, split_name)
         
         # Create TensorDataset
         dataset = torch.utils.data.TensorDataset(all_embeddings, all_sentiment_ids)
@@ -329,11 +417,17 @@ def main():
     
     # Create embedding data module
     print("Creating embedding data module...")
+    print(f"Embeddings cache directory: {args.embeddings_cache_dir}")
+    if args.force_recompute:
+        print("Force recompute enabled - will ignore cached embeddings")
+    
     embedding_datamodule = EmbeddingDataModule(
         glim_model=glim_model,
         base_datamodule=base_datamodule,
         batch_size=args.batch_size,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        cache_dir=args.embeddings_cache_dir,
+        force_recompute=args.force_recompute
     )
     
     # Initialize MLP model

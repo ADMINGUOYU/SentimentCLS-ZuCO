@@ -29,6 +29,7 @@ lightning_logs/
 
 # Data
 data/tmp/
+data/embeddings_cache/
 datasets/
 *.df
 *.csv

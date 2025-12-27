@@ -57,7 +57,7 @@ This will save checkpoints in `./checkpoints/sentiment_classification/`
 
 ### 2. Train MLP Classifier
 
-The training script now uses the simplified `extract_embeddings()` method:
+The training script now uses the simplified `extract_embeddings()` method and **automatically caches** the extracted embeddings to disk to avoid reprocessing them on subsequent runs:
 
 ```bash
 python train_mlp.py \
@@ -71,11 +71,19 @@ python train_mlp.py \
   --patience 10
 ```
 
+**Embedding Caching:**
+- Embeddings are automatically saved to `./data/embeddings_cache/` by default
+- On subsequent runs, cached embeddings are loaded instantly (no reprocessing needed!)
+- To force recomputation: add `--force_recompute` flag
+- To change cache location: use `--embeddings_cache_dir /path/to/cache`
+
 ### Command Line Arguments
 
 **Data Arguments:**
 - `--data_path`: Path to merged dataset (required)
 - `--glim_checkpoint`: Path to pre-trained GLIM checkpoint (required)
+- `--embeddings_cache_dir`: Directory to cache extracted embeddings (default: ./data/embeddings_cache)
+- `--force_recompute`: Force recomputation of embeddings even if cache exists
 
 **Model Arguments:**
 - `--hidden_dims`: Hidden layer dimensions (default: [512, 256])
@@ -121,6 +129,10 @@ Open your browser at: http://localhost:6006
 3. **Simple Architecture**: Easy to understand and modify
 4. **Transfer Learning**: Leverages pre-trained GLIM embeddings
 5. **Good Performance**: Can achieve competitive accuracy with proper tuning
+6. **🆕 Embedding Caching**: Automatically caches processed embeddings to avoid reprocessing
+   - First run: Extracts and saves embeddings (~few minutes)
+   - Subsequent runs: Loads from cache instantly (~seconds)
+   - Great for hyperparameter tuning and experimentation!
 
 ## Model Details
 

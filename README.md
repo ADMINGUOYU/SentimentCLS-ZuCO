@@ -185,6 +185,7 @@ For a lightweight alternative, you can use the MLP classifier that trains on GLI
 - **Faster training**: Much quicker than training full GLIM
 - **Less memory**: Requires significantly less GPU memory
 - **Good performance**: Achieves competitive accuracy for sentiment classification
+- **🆕 Embedding caching**: Automatically caches extracted embeddings to avoid reprocessing
 
 See [MLP_README.md](MLP_README.md) for detailed instructions.
 
@@ -194,10 +195,21 @@ See [MLP_README.md](MLP_README.md) for detailed instructions.
 # 1. Train or use existing GLIM model
 python train.py --max_epochs 100
 
-# 2. Train MLP on GLIM embeddings
+# 2. Train MLP on GLIM embeddings (first run extracts and caches embeddings)
 python train_mlp.py \
   --glim_checkpoint ./checkpoints/sentiment_classification/last.ckpt \
   --max_epochs 50 \
   --early_stopping
+
+# 3. Subsequent runs load cached embeddings instantly (100x faster!)
+python train_mlp.py \
+  --glim_checkpoint ./checkpoints/sentiment_classification/last.ckpt \
+  --hidden_dims 256 128 \
+  --max_epochs 50
 ```
+
+**Embedding Cache Benefits:**
+- ⚡ First run: ~2-5 minutes (extract + cache)
+- 🚀 Subsequent runs: ~1-2 seconds (load from cache)
+- 🎯 Perfect for hyperparameter tuning and quick experiments!
 

@@ -225,6 +225,11 @@ class EmbeddingDataModule(L.LightningDataModule):
                 self.base_datamodule.val_dataloader(),
                 split_name='val'
             )
+            
+            # Pre-compute sample weights if weighted sampling is enabled
+            if self.use_weighted_sampler:
+                sentiment_ids = torch.stack([self.train_embeddings[i][1] for i in range(len(self.train_embeddings))])
+                self.train_sample_weights = self._compute_sample_weights(sentiment_ids)
         
         if stage == 'test' or stage is None:
             self.test_embeddings = self._extract_embeddings(
@@ -358,16 +363,10 @@ class EmbeddingDataModule(L.LightningDataModule):
     
     def train_dataloader(self):
         if self.use_weighted_sampler:
-            # Extract sentiment IDs from the dataset
-            sentiment_ids = torch.stack([self.train_embeddings[i][1] for i in range(len(self.train_embeddings))])
-            
-            # Compute sample weights
-            sample_weights = self._compute_sample_weights(sentiment_ids)
-            
-            # Create weighted random sampler
+            # Use pre-computed sample weights
             sampler = torch.utils.data.WeightedRandomSampler(
-                weights=sample_weights,
-                num_samples=len(sample_weights),
+                weights=self.train_sample_weights,
+                num_samples=len(self.train_sample_weights),
                 replacement=True
             )
             

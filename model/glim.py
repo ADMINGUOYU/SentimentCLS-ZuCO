@@ -245,12 +245,18 @@ class GLIM(L.LightningModule):
                 }
 
     def define_metrics(self, metric_keys: list=None) -> None:
-        run = self.logger.experiment
-        for key in metric_keys:
-            if 'loss' in key:
-                run.define_metric(key, summary='min')
-            else:
-                run.define_metric(key, summary='max')
+        """
+        Define metrics for logging. Only works with WandB logger.
+        TensorBoard logger doesn't support this feature, so we skip it silently.
+        """
+        # Check if logger has define_metric method (WandB specific)
+        if hasattr(self.logger, 'experiment') and hasattr(self.logger.experiment, 'define_metric'):
+            run = self.logger.experiment
+            for key in metric_keys:
+                if 'loss' in key:
+                    run.define_metric(key, summary='min')
+                else:
+                    run.define_metric(key, summary='max')
 
     def cal_retrieval_metrics(self, logits: torch.Tensor, targets:torch.Tensor=None,
                               strict=False):
@@ -607,7 +613,9 @@ class GLIM(L.LightningModule):
         self.log_dict(mean_metrics, rank_zero_only=True)
         
         sample_metrics = pd.DataFrame(all_rows)
-        self.logger.log_table(key=f'{prefix}/Samples', dataframe=sample_metrics)
+        # Log table only if logger supports it (WandB specific)
+        if hasattr(self.logger, 'log_table'):
+            self.logger.log_table(key=f'{prefix}/Samples', dataframe=sample_metrics)
 
     def on_test_epoch_start(self):
         assert not dist.is_initialized()  # NOTE: use single GPU to ensure the reproducibility

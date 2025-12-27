@@ -22,6 +22,21 @@ from lightning.pytorch.callbacks import (
 from data.datamodule import GLIMDataModule
 from model.glim import GLIM
 
+# Configuration constants
+SUPPORTED_TEXT_MODELS = [
+    'google/flan-t5-xl',
+    'google/flan-t5-large',
+    'facebook/bart-large-cnn',
+    'jbochi/madlad400-3b-mt'
+]
+
+# Model defaults
+DEFAULT_INPUT_EEG_LEN = 1280
+DEFAULT_HIDDEN_EEG_LEN = 96
+DEFAULT_INPUT_TEXT_LEN = 96
+DEFAULT_TGT_TEXT_LEN = 64
+DEFAULT_INPUT_DIM = 128
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -48,8 +63,7 @@ def parse_args():
         '--text_model',
         type=str,
         default='google/flan-t5-large',
-        choices=['google/flan-t5-xl', 'google/flan-t5-large', 
-                 'facebook/bart-large-cnn', 'jbochi/madlad400-3b-mt'],
+        choices=SUPPORTED_TEXT_MODELS,
         help='Pre-trained text model to use'
     )
     parser.add_argument(
@@ -320,11 +334,11 @@ def main():
     # Initialize model
     print("Initializing model...")
     model = GLIM(
-        input_eeg_len=1280,
-        hidden_eeg_len=96,
-        input_text_len=96,
-        tgt_text_len=64,
-        input_dim=128,
+        input_eeg_len=DEFAULT_INPUT_EEG_LEN,
+        hidden_eeg_len=DEFAULT_HIDDEN_EEG_LEN,
+        input_text_len=DEFAULT_INPUT_TEXT_LEN,
+        tgt_text_len=DEFAULT_TGT_TEXT_LEN,
+        input_dim=DEFAULT_INPUT_DIM,
         hidden_dim=args.hidden_dim,
         embed_dim=args.embed_dim,
         text_model_id=args.text_model,

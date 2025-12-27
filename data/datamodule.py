@@ -18,6 +18,7 @@ class GLIMDataModule(pl.LightningDataModule):
                  bsz_test = 24,
                  test_set_key: Literal['test', 'train', 'val'] = 'test',
                  num_workers: int = 0,
+                 use_weighted_sampler: bool = False,
                  ):
         super().__init__()
         assert os.path.exists(data_path)
@@ -28,6 +29,7 @@ class GLIMDataModule(pl.LightningDataModule):
         self.bsz_test = bsz_test
         self.test_set_key = test_set_key
         self.num_workers = num_workers
+        self.use_weighted_sampler = use_weighted_sampler
 
     def prepare_data(self) -> None:
         return super().prepare_data()
@@ -49,8 +51,22 @@ class GLIMDataModule(pl.LightningDataModule):
         print(f'[Rank {local_rank}][{self.__class__.__name__}] running `setup()`...Done!','\U0001F60B'*3)
             
     def train_dataloader(self):
-        train_sampler = GLIMSampler(self.train_set, self.train_set.data['text uid'],
-                                    'train', self.bsz_train)
+        if self.use_weighted_sampler:
+            # Create weighted sampler based on sentiment labels
+            train_sampler = WeightedGLIMSampler(
+                self.train_set, 
+                self.train_set.data['text uid'],
+                self.train_set.data['sentiment label'],
+                'train', 
+                self.bsz_train
+            )
+        else:
+            train_sampler = GLIMSampler(
+                self.train_set, 
+                self.train_set.data['text uid'],
+                'train', 
+                self.bsz_train
+            )
         train_loader = DataLoader(self.train_set,
                                   batch_sampler=train_sampler,
                                   num_workers = self.num_workers,
@@ -237,6 +253,91 @@ class GLIMSampler(DistributedSampler):
         return (valid_batches,   # list[tensor(bs, 2)]
                 unused_samples,  # tensor(n, 2)
                 )
+
+
+class WeightedGLIMSampler(GLIMSampler):
+    '''
+    A weighted batch sampler for train GLIM that applies class balancing based on sentiment labels.
+    Extends GLIMSampler to maintain the text-based sampling while applying weights for class imbalance.
+    '''
+    def __init__(self, 
+                 dataset: Dataset, 
+                 identifiers: list,
+                 sentiment_labels: list,
+                 phase: Literal['train', 'val', 'test'],
+                 batch_size: int,
+                 num_replicas = None,
+                 rank = None,
+                 ) -> None:
+        super().__init__(dataset, identifiers, phase, batch_size, num_replicas, rank)
+        
+        # Compute sample weights based on sentiment labels
+        self.sample_weights = self._compute_sample_weights(sentiment_labels)
+    
+    def _compute_sample_weights(self, sentiment_labels):
+        """
+        Compute sample weights for weighted random sampling to handle class imbalance.
+        Uses inverse frequency weighting.
+        
+        Args:
+            sentiment_labels: List of sentiment label strings
+            
+        Returns:
+            Tensor of sample weights, one per sample
+        """
+        # Map sentiment labels to IDs
+        label_to_id = {'negative': 0, 'neutral': 1, 'positive': 2}
+        sentiment_ids = torch.tensor([label_to_id.get(label, 1) for label in sentiment_labels])
+        
+        # Count samples per class
+        unique_labels, counts = torch.unique(sentiment_ids, return_counts=True)
+        
+        # Compute class weights (inverse frequency)
+        total_samples = len(sentiment_ids)
+        class_weights = total_samples / (len(unique_labels) * counts.float())
+        
+        # Create a mapping from label to weight
+        label_to_weight = {label.item(): weight.item() for label, weight in zip(unique_labels, class_weights)}
+        
+        # Assign weight to each sample based on its label
+        sample_weights = torch.tensor([label_to_weight[label.item()] for label in sentiment_ids])
+        
+        return sample_weights
+    
+    def __iter__(self) -> Iterator[list[int]]:
+        if self.shuffle:
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch)
+            
+            # Apply weighted sampling
+            weighted_sampler = torch.utils.data.WeightedRandomSampler(
+                weights=self.sample_weights,
+                num_samples=len(self.dataset),
+                replacement=True,
+                generator=g
+            )
+            indices = torch.tensor(list(weighted_sampler))
+        else:
+            indices = torch.arange(len(self.dataset))
+
+        batches, _ = self.sample_batches(indices,
+                                        identifiers = self.identifiers[indices], 
+                                        batch_size = self.batch_size,
+                                        )
+        if len(batches) >= self.n_batches:
+            batches = batches[:self.n_batches]
+        else:
+            padding_size = self.n_batches - len(batches)
+            if padding_size > 3:
+                print('😅😅😅 [padding_size>3]!!! ', f'expect {self.n_batches} batches but only got {len(batches)}...')
+                print('epoch:             ',f'{self.epoch}')
+                print('phase:             ',f'{self.phase}')
+                print('batch_size:        ',f'{self.batch_size}')
+            batches += batches[:padding_size]
+        sub_batches = batches[self.rank : self.n_batches : self.num_replicas]
+
+        for batch in sub_batches:
+            yield batch
 
 
 class ZuCoDataset(Dataset):

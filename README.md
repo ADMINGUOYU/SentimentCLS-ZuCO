@@ -92,3 +92,92 @@ The dataloader (`data/datamodule.py`):
 - Creates train/val/test datasets based on the 'phase' column
 - Returns batches with EEG signals, text, and labels (both sentiment and relation)
 - Uses custom `GLIMSampler` to ensure unique texts per batch for contrastive learning
+
+## Training
+
+### Quick Start
+
+Train the model with default settings:
+
+```bash
+python train.py --data_path ./data/tmp/zuco_merged.df
+```
+
+### Training Options
+
+```bash
+python train.py \
+  --data_path ./data/tmp/zuco_merged.df \
+  --text_model google/flan-t5-large \
+  --batch_size 48 \
+  --val_batch_size 24 \
+  --lr 1e-5 \
+  --max_epochs 100 \
+  --accelerator auto \
+  --devices 1 \
+  --precision bf16-mixed \
+  --experiment_name sentiment_cls_experiment \
+  --early_stopping \
+  --patience 10
+```
+
+**Key Arguments:**
+
+- `--data_path`: Path to merged dataset (default: `./data/tmp/zuco_merged.df`)
+- `--text_model`: Pre-trained text model (default: `google/flan-t5-large`)
+- `--batch_size`: Training batch size (default: 48)
+- `--lr`: Learning rate (default: 1e-5)
+- `--max_epochs`: Maximum training epochs (default: 100)
+- `--accelerator`: Hardware accelerator (auto/cpu/gpu/tpu, default: auto)
+- `--devices`: Number of devices to use (default: 1)
+- `--precision`: Training precision (32/16-mixed/bf16-mixed, default: bf16-mixed)
+- `--early_stopping`: Enable early stopping
+- `--patience`: Early stopping patience (default: 10)
+- `--resume_from_checkpoint`: Resume from checkpoint path
+
+Run `python train.py --help` for full list of options.
+
+### Viewing Training Progress
+
+The training script logs all metrics to TensorBoard. To view logs:
+
+```bash
+# Option 1: Use the provided script
+./view_logs.sh
+
+# Option 2: Launch TensorBoard manually
+tensorboard --logdir ./logs --port 6006
+```
+
+Then open your browser and navigate to: `http://localhost:6006`
+
+**TensorBoard Features:**
+
+- **Scalars**: Loss curves (total, CLIP, LM, commitment), accuracy metrics (sentiment/relation classification), retrieval accuracy
+- **Hparams**: Hyperparameter comparison across experiments
+- **Text**: Generated text samples and predictions during validation
+- **Graphs**: Model architecture visualization
+
+### Checkpoints
+
+Model checkpoints are saved to `./checkpoints/` directory:
+- Best models based on validation sentiment accuracy
+- Last checkpoint for resuming training
+- Top-k models (default: 3)
+
+To resume training from a checkpoint:
+
+```bash
+python train.py --resume_from_checkpoint ./checkpoints/sentiment_classification/last.ckpt
+```
+
+## Evaluation
+
+The model is evaluated on:
+1. **Sentiment Classification**: Accuracy on all tasks (task1, task2, task3)
+2. **Relation Classification**: Accuracy on task2 and task3
+3. **Text Generation**: BLEU, ROUGE scores for paraphrase generation
+4. **Retrieval**: EEG-text retrieval accuracy
+
+Metrics are logged per-task and averaged across all tasks.
+

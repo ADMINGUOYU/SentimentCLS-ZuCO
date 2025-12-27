@@ -2,10 +2,15 @@
 
 This repository is built on [GLIM](https://github.com/justin-xzliu/GLIM) and adapted to perform **sentiment classification** on all ZuCo 1.0 tasks.
 
+## Models Available
+
+1. **GLIM Model** - Full end-to-end model with EEG encoding and sentiment classification
+2. **MLP Classifier** - Lightweight MLP that uses GLIM embeddings for sentiment classification (see [MLP_README.md](MLP_README.md))
+
 ## Key Changes from Original GLIM
 
 1. **Sentiment labels** are generated for all ZuCo 1.0 tasks (task1, task2, task3)
-2. **Relation labels** are preserved for task2 and task3 (set to 'nan' for task1)
+2. **Removed relation classification** - Focus solely on sentiment
 3. Labels are stored as **text strings** (e.g., "negative", "neutral", "positive") to match the model's expectations
 
 ## Data Preprocessing Pipeline
@@ -173,4 +178,26 @@ The model is evaluated on:
 3. **Retrieval**: EEG-text retrieval accuracy
 
 Metrics are logged per-task and averaged across all tasks.
+
+## MLP Sentiment Classifier
+
+For a lightweight alternative, you can use the MLP classifier that trains on GLIM embeddings. This approach:
+- **Faster training**: Much quicker than training full GLIM
+- **Less memory**: Requires significantly less GPU memory
+- **Good performance**: Achieves competitive accuracy for sentiment classification
+
+See [MLP_README.md](MLP_README.md) for detailed instructions.
+
+**Quick start with MLP:**
+
+```bash
+# 1. Train or use existing GLIM model
+python train.py --max_epochs 100
+
+# 2. Train MLP on GLIM embeddings
+python train_mlp.py \
+  --glim_checkpoint ./checkpoints/sentiment_classification/last.ckpt \
+  --max_epochs 50 \
+  --early_stopping
+```
 

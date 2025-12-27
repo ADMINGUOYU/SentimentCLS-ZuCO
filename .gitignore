@@ -19,7 +19,9 @@ venv/
 
 # Training outputs
 logs/
+logs_mlp/
 checkpoints/
+checkpoints_mlp/
 lightning_logs/
 *.ckpt
 *.pth

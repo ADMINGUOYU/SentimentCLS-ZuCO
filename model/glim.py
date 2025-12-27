@@ -249,14 +249,21 @@ class GLIM(L.LightningModule):
         Define metrics for logging. Only works with WandB logger.
         TensorBoard logger doesn't support this feature, so we skip it silently.
         """
+        if metric_keys is None:
+            return
+        
         # Check if logger has define_metric method (WandB specific)
-        if hasattr(self.logger, 'experiment') and hasattr(self.logger.experiment, 'define_metric'):
-            run = self.logger.experiment
-            for key in metric_keys:
-                if 'loss' in key:
-                    run.define_metric(key, summary='min')
-                else:
-                    run.define_metric(key, summary='max')
+        try:
+            experiment = getattr(self.logger, 'experiment', None)
+            if experiment and hasattr(experiment, 'define_metric'):
+                for key in metric_keys:
+                    if 'loss' in key:
+                        experiment.define_metric(key, summary='min')
+                    else:
+                        experiment.define_metric(key, summary='max')
+        except (AttributeError, TypeError):
+            # Logger doesn't support define_metric, skip silently
+            pass
 
     def cal_retrieval_metrics(self, logits: torch.Tensor, targets:torch.Tensor=None,
                               strict=False):

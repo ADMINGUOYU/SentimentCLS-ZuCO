@@ -617,7 +617,6 @@ class GLIM(L.LightningModule):
         
         metrics = ({f'test/{k}-batch{batch_idx}':v for k, v in metrics.items()})
         self.log_dict(metrics, sync_dist=True, batch_size=self.bsz_retrieval)
-        self.full_val_step(shared_outputs)
         outputs = self.full_val_step(shared_outputs)
         self.test_step_outputs.append(outputs)
 

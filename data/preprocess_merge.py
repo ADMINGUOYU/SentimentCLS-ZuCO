@@ -54,7 +54,10 @@ print(f"Merged columns: {df_merged.columns.tolist()}")
 df_merged = df_merged.drop(['text'], axis=1)
 
 # Add target text columns - for sentiment classification, we use input text as target
-# These columns are needed by the dataloader for paraphrasing evaluation
+# These columns are needed by the dataloader for paraphrasing evaluation compatibility
+# Note: In this sentiment classification task, we're not doing paraphrasing, but the 
+# dataloader expects these columns. Using input text as target is appropriate since
+# we're focused on classification accuracy, not text generation quality.
 for key in TARGET_KEYS:
     df_merged[key] = df_merged['input text']
 

@@ -3,7 +3,11 @@ from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 
-sentiment_pipeline = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment-latest", device = 'cuda:0')
+# Use CUDA if available, otherwise fallback to CPU
+device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+sentiment_pipeline = pipeline("sentiment-analysis", 
+                              model="cardiffnlp/twitter-roberta-base-sentiment-latest", 
+                              device=device)
 
 def generate(text:str) -> str:
     """

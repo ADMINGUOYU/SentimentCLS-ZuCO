@@ -658,3 +658,54 @@ class GLIM(L.LightningModule):
         label_embs = self.cal_label_embs(labels=candidates)
         probs = self.run_cls(text_emb, label_embs)
         return probs
+    
+    @torch.no_grad()
+    def extract_embeddings(self, eeg, eeg_mask, prompts=None):
+        """
+        Extract EEG embeddings with minimal setup and dependencies.
+        
+        This is a simplified method for extracting embeddings that can be used
+        with the MLP classifier or other downstream tasks. It requires minimal
+        setup and doesn't need target text or labels.
+        
+        Args:
+            eeg: EEG tensor of shape (batch_size, seq_len, channels)
+            eeg_mask: Mask tensor of shape (batch_size, seq_len)
+            prompts: Optional tuple of (task, dataset, subject) prompts.
+                    If None, uses default prompts ('<UNK>', '<UNK>', '<UNK>')
+        
+        Returns:
+            eeg_emb_vector: EEG embedding vectors of shape (batch_size, embed_dim)
+        
+        Example:
+            >>> # Simple usage without prompts
+            >>> embeddings = model.extract_embeddings(eeg_data, eeg_mask)
+            
+            >>> # With custom prompts
+            >>> prompts = [('task1', 'ZuCo1', 'ZAB'), ('task2', 'ZuCo2', 'ZDM')]
+            >>> embeddings = model.extract_embeddings(eeg_data, eeg_mask, prompts)
+        """
+        # Ensure model is in eval mode
+        self.eval()
+        
+        # Move inputs to device
+        eeg = eeg.to(self.device)
+        eeg_mask = eeg_mask.to(self.device)
+        
+        # Handle prompts
+        if prompts is None:
+            # Use default prompts if none provided
+            batch_size = eeg.shape[0]
+            prompts = [('<UNK>', '<UNK>', '<UNK>')] * batch_size
+        
+        # Encode prompts
+        prompt_ids = self.p_embedder.encode(prompts, device=self.device)  # (n, 3)
+        prompt_embed = self.p_embedder(prompt_ids, self.eval_pembed)  # (n, c)
+        
+        # Encode EEG
+        eeg_hiddens, _ = self.eeg_encoder(eeg, eeg_mask, prompt_embed)
+        
+        # Extract embeddings from aligner
+        _, eeg_emb_vector = self.aligner.embed_eeg(eeg_hiddens)
+        
+        return eeg_emb_vector

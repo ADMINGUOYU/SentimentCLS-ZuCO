@@ -197,8 +197,8 @@ class EmbeddingDataModule(L.LightningDataModule):
     
     @torch.no_grad()
     def _extract_embeddings(self, dataloader):
-        """Extract embeddings from GLIM for the entire dataset."""
-        print(f"Extracting embeddings from GLIM...")
+        """Extract embeddings from GLIM for the entire dataset using simplified method."""
+        print(f"Extracting embeddings from GLIM using simplified extract_embeddings method...")
         embeddings_list = []
         sentiment_ids_list = []
         
@@ -206,14 +206,17 @@ class EmbeddingDataModule(L.LightningDataModule):
         device = next(self.glim_model.parameters()).device
         
         for batch_idx, batch in enumerate(dataloader):
-            # Move batch to device
-            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
-                    for k, v in batch.items()}
+            # Extract required inputs with minimal processing
+            eeg = batch['eeg'].to(device)  # (n, l, c)
+            eeg_mask = batch['mask'].to(device)  # (n, l)
+            prompts = batch['prompt']  # list of tuples
+            sentiment_label = batch['sentiment label']  # list of str
             
-            # Get embeddings from GLIM
-            shared_outputs = self.glim_model.shared_forward(batch)
-            eeg_emb_vector = shared_outputs['eeg_emb_vector']  # (n, embed_dim)
-            sentiment_ids = shared_outputs['sentiment_ids']  # (n,)
+            # Use the simplified extract_embeddings method
+            eeg_emb_vector = self.glim_model.extract_embeddings(eeg, eeg_mask, prompts)
+            
+            # Encode sentiment labels
+            sentiment_ids = self.glim_model.encode_labels(sentiment_label)
             
             embeddings_list.append(eeg_emb_vector.cpu())
             sentiment_ids_list.append(sentiment_ids.cpu())

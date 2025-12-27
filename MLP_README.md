@@ -9,6 +9,32 @@ The MLP sentiment classifier is a lightweight alternative to the full GLIM model
 1. **Extract embeddings**: Use a pre-trained GLIM model to generate EEG embeddings
 2. **Train MLP**: Train a simple MLP classifier on these embeddings for sentiment prediction
 
+## Simplified Embedding Extraction
+
+GLIM now includes a simplified `extract_embeddings()` method that requires minimal setup:
+
+```python
+# Load model
+model = GLIM.load_from_checkpoint('checkpoint.ckpt')
+model.eval()
+
+# Extract embeddings - that's it!
+embeddings = model.extract_embeddings(eeg_data, eeg_mask)
+
+# Optional: with custom prompts
+prompts = [('task1', 'ZuCo1', 'ZAB'), ...]
+embeddings = model.extract_embeddings(eeg_data, eeg_mask, prompts)
+```
+
+**Benefits:**
+- ✅ No need to call `setup()` method
+- ✅ No need for target text or labels
+- ✅ No complex batch dictionary handling
+- ✅ No tokenization required
+- ✅ Just provide EEG data and mask!
+
+See `example_extract_embeddings.py` for complete examples.
+
 ## Model Architecture
 
 The `SentimentMLP` model consists of:
@@ -30,7 +56,7 @@ This will save checkpoints in `./checkpoints/sentiment_classification/`
 
 ### 2. Train MLP Classifier
 
-Train the MLP classifier using GLIM embeddings:
+The training script now uses the simplified `extract_embeddings()` method:
 
 ```bash
 python train_mlp.py \

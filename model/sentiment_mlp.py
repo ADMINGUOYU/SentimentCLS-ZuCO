@@ -92,9 +92,8 @@ class SentimentMLP(L.LightningModule):
         # Calculate loss
         loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
         
-        # Calculate accuracy
-        probs = F.softmax(logits, dim=-1)
-        acc = multiclass_accuracy(probs, sentiment_ids, 
+        # Calculate accuracy (use logits directly, no need for softmax)
+        acc = multiclass_accuracy(logits, sentiment_ids, 
                                   average='micro', 
                                   num_classes=self.num_classes, 
                                   ignore_index=-1,
@@ -117,9 +116,8 @@ class SentimentMLP(L.LightningModule):
         # Calculate loss
         loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
         
-        # Calculate accuracy
-        probs = F.softmax(logits, dim=-1)
-        acc = multiclass_accuracy(probs, sentiment_ids,
+        # Calculate accuracy (use logits directly, no need for softmax)
+        acc = multiclass_accuracy(logits, sentiment_ids,
                                   average='micro',
                                   num_classes=self.num_classes,
                                   ignore_index=-1,
@@ -142,16 +140,15 @@ class SentimentMLP(L.LightningModule):
         # Calculate loss
         loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
         
-        # Calculate accuracy
-        probs = F.softmax(logits, dim=-1)
-        acc = multiclass_accuracy(probs, sentiment_ids,
+        # Calculate accuracy (use logits directly, no need for softmax)
+        acc = multiclass_accuracy(logits, sentiment_ids,
                                   average='micro',
                                   num_classes=self.num_classes,
                                   ignore_index=-1,
                                   top_k=1)
         
         # Get predictions
-        preds = torch.argmax(probs, dim=1)
+        preds = torch.argmax(logits, dim=1)
         
         # Log metrics
         self.log('test/loss', loss, sync_dist=True)

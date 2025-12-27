@@ -237,7 +237,8 @@ class EmbeddingDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=custom_collate_fn
         )
     
     def val_dataloader(self):
@@ -246,7 +247,8 @@ class EmbeddingDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=custom_collate_fn
         )
     
     def test_dataloader(self):
@@ -255,7 +257,8 @@ class EmbeddingDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=custom_collate_fn
         )
 
 
@@ -329,9 +332,6 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers
     )
-    
-    # Override collate_fn
-    embedding_datamodule.collate_fn = custom_collate_fn
     
     # Initialize MLP model
     print("\nInitializing MLP sentiment classifier...")

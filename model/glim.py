@@ -716,3 +716,53 @@ class GLIM(L.LightningModule):
         _, eeg_emb_vector = self.aligner.embed_eeg(eeg_hiddens, mask=None)
         
         return eeg_emb_vector
+    
+    def extract_embeddings_with_grad(self, eeg, eeg_mask=None, prompts=None):
+        """
+        Extract EEG embeddings WITH gradients enabled for end-to-end training.
+        
+        This method is similar to extract_embeddings but allows gradients to flow
+        through the GLIM encoder for joint training with downstream tasks.
+        
+        **Important**: Unlike extract_embeddings, this method does NOT use @torch.no_grad()
+        and should be used when you want to train the GLIM encoder together with a 
+        downstream model (e.g., sentiment classifier).
+        
+        Args:
+            eeg: EEG tensor of shape (batch_size, seq_len, channels)
+            eeg_mask: Optional mask tensor (will be ignored - no masking applied)
+            prompts: Optional tuple of (task, dataset, subject) prompts.
+                    If None, uses default prompts ('<UNK>', '<UNK>', '<UNK>')
+        
+        Returns:
+            eeg_emb_vector: EEG embedding vectors of shape (batch_size, embed_dim)
+            
+        Example:
+            >>> # For end-to-end training with gradients
+            >>> embeddings = model.extract_embeddings_with_grad(eeg_data)
+            >>> # Gradients will flow through GLIM encoder during backprop
+        """
+        # Move inputs to device
+        eeg = eeg.to(self.device)
+        
+        # Create an all-ones mask (no masking) for the EEG encoder
+        # This ensures all timesteps are used for embedding extraction
+        batch_size, seq_len, _ = eeg.shape
+        eeg_mask_unmasked = torch.ones(batch_size, seq_len, dtype=torch.float32, device=self.device)
+        
+        # Handle prompts
+        if prompts is None:
+            # Use default prompts if none provided
+            prompts = [['<UNK>'] * batch_size, ['<UNK>'] * batch_size, ['<UNK>'] * batch_size]
+        
+        # Encode prompts
+        prompt_ids = self.p_embedder.encode(prompts, device=self.device)  # (n, 3)
+        prompt_embed = self.p_embedder(prompt_ids, self.eval_pembed)  # (n, c)
+        
+        # Encode EEG without masking (use all-ones mask) - gradients enabled
+        eeg_hiddens, _ = self.eeg_encoder(eeg, eeg_mask_unmasked, prompt_embed)
+        
+        # Extract embeddings from aligner without masking - gradients enabled
+        _, eeg_emb_vector = self.aligner.embed_eeg(eeg_hiddens, mask=None)
+        
+        return eeg_emb_vector

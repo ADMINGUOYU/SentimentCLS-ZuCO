@@ -9,7 +9,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from preprocess_gen_lbl import revise_typo
 
 # tmp path (saving path)
-tmp_path = '/nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp'
+# User can modify this path to save outputs to a different location
+# Default: './tmp' for local storage
+tmp_path = './tmp'
+# Create tmp directory if it doesn't exist
+os.makedirs(tmp_path, exist_ok=True)
 
 # select specific subjects (None for all subjects)
 select_subjs = ['ZAB']

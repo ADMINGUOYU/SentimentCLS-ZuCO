@@ -1,12 +1,17 @@
 import numpy as np
 import pandas as pd
 from load_mat import mat2df_zuco
+import os
 
 data_dir = './datasets/ZuCo'
 zuco1_task1_mats_path = data_dir
 
 # tmp path (saving path)
-tmp_path = '/nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp'
+# User can modify this path to save outputs to a different location
+# Default: './tmp' for local storage
+tmp_path = './tmp'
+# Create tmp directory if it doesn't exist
+os.makedirs(tmp_path, exist_ok=True)
 
 ########################################
 """ Process mat: ZuCO 1.0 Task 1 - 3 """

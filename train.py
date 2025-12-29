@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument(
         '--data_path',
         type=str,
-        default='./data/tmp/zuco_merged.df',
+        default='./tmp/zuco_merged.df',
         help='Path to the merged dataset pickle file'
     )
     parser.add_argument(

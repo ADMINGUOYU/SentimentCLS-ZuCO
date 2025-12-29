@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader, DistributedSampler
 
 # Constants
 SBERT_EMBEDDING_DIM = 768  # Dimension of SBERT (all-mpnet-base-v2) embeddings
+MAX_KEYWORDS = 3  # Number of top keywords to extract per sentence
 
 
 class GLIMDataModule(pl.LightningDataModule):
@@ -428,9 +429,13 @@ class ZuCoDataset(Dataset):
                     keyword_embeddings.append(embeddings_dict[uid]['keyword'])
                 else:
                     # If embedding not found, use zeros as placeholder
-                    warnings.warn(f"Embedding not found for text_uid {uid}, using zero placeholder")
+                    warnings.warn(
+                        f"Embedding not found for text_uid {uid}. Using zero placeholder. "
+                        f"This may indicate missing data in embeddings.pickle or a mismatch in preprocessing.",
+                        UserWarning
+                    )
                     sentence_embeddings.append(np.zeros(SBERT_EMBEDDING_DIM, dtype=np.float32))
-                    keyword_embeddings.append(np.zeros((3, SBERT_EMBEDDING_DIM), dtype=np.float32))
+                    keyword_embeddings.append(np.zeros((MAX_KEYWORDS, SBERT_EMBEDDING_DIM), dtype=np.float32))
             
             # Get keyword texts from dataframe
             if 'keyword_1' in df.columns:

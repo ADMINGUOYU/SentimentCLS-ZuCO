@@ -215,7 +215,7 @@ class GLIM(L.LightningModule):
         # Expand to sequence format: (n, embed_dim) -> (n, 1, embed_dim)
         expanded = projected.unsqueeze(1)  # (n, 1, embed_dim)
         # Create mask (all ones since we have valid embeddings)
-        mask = torch.ones(sentence_embeddings.shape[0], 1, device=self.device, dtype=torch.int)
+        mask = torch.ones(sentence_embeddings.shape[0], 1, device=self.device, dtype=torch.long)
         return expanded, mask
 
     def text_decoder_forward(self, src_embeds, src_mask, tgt_ids):

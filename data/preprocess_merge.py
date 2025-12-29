@@ -8,6 +8,12 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, os.path.dirname(__file__))
 from preprocess_gen_lbl import revise_typo
 
+# tmp path (saving path)
+tmp_path = '/nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp'
+
+# select specific subjects (None for all subjects)
+select_subjs = ['ZAB']
+
 # Configuration constants
 TARGET_KEYS = [
     'lexical simplification (v0)', 'lexical simplification (v1)', 
@@ -27,12 +33,12 @@ This script assumes that:
 """
 
 # Load the EEG data
-df_eeg = pd.read_pickle('./data/tmp/zuco_eeg_128ch_1280len.df')
+df_eeg = pd.read_pickle(tmp_path + '/zuco_eeg_128ch_1280len.df')
 print(f"Loaded EEG data: {df_eeg.shape[0]} rows")
 print(f"EEG columns: {df_eeg.columns.tolist()}")
 
 # Load the label data
-df_labels = pd.read_pickle('./data/tmp/zuco_label_input_text.df')
+df_labels = pd.read_pickle(tmp_path + '/zuco_label_input_text.df')
 print(f"Loaded label data: {df_labels.shape[0]} rows")
 print(f"Label columns: {df_labels.columns.tolist()}")
 
@@ -83,6 +89,12 @@ print(f"Final merged data: {df_merged.shape[0]} rows")
 print(f"Train: {(df_merged['phase'] == 'train').sum()}, Val: {(df_merged['phase'] == 'val').sum()}, Test: {(df_merged['phase'] == 'test').sum()}")
 print(f"Columns: {df_merged.columns.tolist()}")
 
+# select target subject (if applicable)
+if select_subjs is not None:
+    # process selection
+    df_merged = df_merged[df_merged['subject'].isin(select_subjs)]
+
 # Save the merged dataframe
-pd.to_pickle(df_merged, './data/tmp/zuco_merged.df')
-print("Saved merged data to ./data/tmp/zuco_merged.df")
+save_location = tmp_path + '/zuco_merged.df'
+pd.to_pickle(df_merged, save_location)
+print(f"Saved merged data to {save_location}")

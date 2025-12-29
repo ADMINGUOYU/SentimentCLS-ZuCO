@@ -1,6 +1,4 @@
 import torch
-from keybert import KeyBERT
-from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 
 # Use CUDA if available, otherwise fallback to CPU

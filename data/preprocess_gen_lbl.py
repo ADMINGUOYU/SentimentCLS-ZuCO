@@ -1,13 +1,17 @@
 import numpy as np
 import pandas as pd
 from generate_sentiment import generate as gen_senti_lbl
-from load_mat import mat2df_zuco
+import generate_embedding
+import pickle
 
 data_dir = './datasets/ZuCo'
 zuco1_task1_lbl_path = data_dir + '/task_materials/sentiment_labels_task1.csv'
 zuco1_task2_lbl_path = data_dir + '/task_materials/relations_labels_task2.csv'
 zuco1_task3_lbl_path = data_dir + '/task_materials/relations_labels_task3.csv'
 zuco1_task1_mats_path = data_dir
+
+# tmp path (saving path)
+tmp_path = '/nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp'
 
 ########################
 """ ZuCO 1.0 task 1 """
@@ -118,14 +122,55 @@ df['input text'] = df['raw text'].apply(revise_typo)
 #################################
 df['sentiment label'] = df['input text'].apply(gen_senti_lbl)
 
+#########################################
+""" Generate keywords and embeddings """
+#########################################
+# generate full sentence embeddings
+sentence_embeddings = generate_embedding.generate_embedding(df['input text'].to_list())
+assert sentence_embeddings.shape[1] == 768, "[ERROR] sentence embeddings is expected in shape (N, 768)"
+# get top 3 key words
+keywords_list = []
+for text in df['input text']:
+    keywords = generate_embedding.generate_top_3_keywords(text)
+    keywords_list.append(keywords)
+# flatten all keywords
+flat_keywords = [kw for sublist in keywords_list for kw in sublist]
+# encode all key words
+kw_embeddings_flat = generate_embedding.generate_embedding(flat_keywords)
+# reshape (N*3, 768) to (N, 3, 768)
+num_sentences = len(df)
+keyword_embeddings = kw_embeddings_flat.reshape(num_sentences, 3, 768)
+assert (keyword_embeddings.shape[1] == 3) and (keyword_embeddings.shape[2] == 768), "[ERROR] top 3 words' embeddings is expected in shape (N, 3, 768)"
+# Prepare metadata DataFrame (text only)
+keywords_df = pd.DataFrame(keywords_list, columns = ['keyword_1', 'keyword_2', 'keyword_3'])
+df = pd.concat([df, keywords_df], axis = 1)
+
 #########################
 """ Assign Unique IDs """
 #########################
 uids, unique_texts = pd.factorize(df['input text'])
 df['text uid'] = uids.tolist()
 
+#######################################
+""" Assign embeddings to Unique IDs """
+#######################################
+assert (sentence_embeddings.shape[0] == len(df)) and (keyword_embeddings.shape[0] == len(df)), "[ERROR] Expected number of sentences to be the same"
+embedding_dict = { }
+for row, uid in enumerate(df['text uid']):
+    embedding_dict[uid] = { 'sentence' : sentence_embeddings[row, : ], 'keyword' : keyword_embeddings[row, : , : ] }
+
 #######################
 """ Save to pickle """
 #######################
-pd.to_pickle(df, './data/tmp/zuco_label_input_text.df')
-df.to_csv('./data/tmp/zuco_label_input_text.csv')
+# # Save sentence embeddings (N, 768)
+# sent_npy_path = tmp_path + '/zuco_sentence_embeddings.npy' # shape (N, 768)
+# np.save(sent_npy_path, sentence_embeddings)
+# # Save keyword embeddings (N, 3, 768)
+# kw_npy_path = tmp_path + '/zuco_keyword_embeddings.npy'   # shape (N, 3, 768)
+# np.save(kw_npy_path, keyword_embeddings)
+# save embeddings
+with open(tmp_path + "/embeddings.pickle", "wb") as f:
+    pickle.dump(embedding_dict, f, protocol = pickle.HIGHEST_PROTOCOL)
+# save dataframe
+pd.to_pickle(df, tmp_path + '/zuco_label_input_text.df')
+df.to_csv(tmp_path + '/zuco_label_input_text.csv')

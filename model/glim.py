@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 import pandas as pd
@@ -17,6 +18,8 @@ from transformers.modeling_outputs import BaseModelOutput
 
 from .modules import PromptEmbedder, EEGEncoder, Aligner
 
+# Constants
+SBERT_EMBEDDING_DIM = 768  # Dimension of SBERT (all-mpnet-base-v2) embeddings
 
 
 class GLIM(L.LightningModule):
@@ -52,8 +55,11 @@ class GLIM(L.LightningModule):
                  bsz_val = 24,
                  lr = 1e-5,
                  weight_decay = 0,
+                 warm_up_step = None,
                  full_val_interval = 10,
                  bs_retrieval = 24,
+                 use_sentence_embeddings = False,
+                 eeg_emb_to_sentence_emb_proj_hidden = [ 1024, 512 ]
                 ):
         
         super().__init__()
@@ -67,10 +73,12 @@ class GLIM(L.LightningModule):
         self.ε = commitment_loss_weight
         self.lr = lr
         self.weight_decay = weight_decay
+        self.warm_up_step = warm_up_step
         self.bsz_train = bsz_train
         self.bsz_val = bsz_val
         self.full_val_interval = full_val_interval
         self.bsz_retrieval = bs_retrieval
+        self.use_sentence_embeddings = use_sentence_embeddings
         self.prompt_keys = {
             # 'task': ['<Normal Reading>'] + ['<Relation Extraction>', '<Sentiment Classification>',],
             'task': ['<UNK>'] + ['<NR>', '<TSR>'],
@@ -99,6 +107,18 @@ class GLIM(L.LightningModule):
         self.use_y_mask = use_y_mask
         self.text_model_id = text_model_id
         self.embed_dim = embed_dim
+        
+        # Add a projection layer for eeg encoded vector (n, l) -> (n, SBERT_EMBEDDING_DIM)
+        if use_sentence_embeddings:
+            self.sentence_emb_proj = nn.Sequential()
+            for idx, hidden in enumerate(eeg_emb_to_sentence_emb_proj_hidden):
+                if idx <= 0:
+                    self.sentence_emb_proj.append(nn.Linear(embed_dim, hidden))
+                else:
+                    self.sentence_emb_proj.append(nn.Linear(eeg_emb_to_sentence_emb_proj_hidden[idx - 1], hidden))
+                self.sentence_emb_proj.append(nn.ReLU())
+            self.sentence_emb_proj.append(nn.Linear(eeg_emb_to_sentence_emb_proj_hidden[-1], SBERT_EMBEDDING_DIM))
+            
 
         self.save_hyperparameters(logger=True)
 
@@ -123,15 +143,19 @@ class GLIM(L.LightningModule):
                 checkpoint['state_dict'].pop(key)
         
     def configure_optimizers(self):
-        params = [p for p in self.parameters() if p.requires_grad == True]
-        opt = torch.optim.Adam(params, 
+        params = [p for p in self.parameters() if p.requires_grad == True]        
+        if self.warm_up_step is not None:
+            opt = torch.optim.Adam(params, 
+                               lr = self.lr)
+            lr_scheduler = get_cosine_schedule_with_warmup(opt, num_warmup_steps = self.warm_up_step, 
+                                                           num_training_steps=self.trainer.max_epochs)
+            return {"optimizer": opt,
+                    "lr_scheduler": lr_scheduler}
+        else:
+            opt = torch.optim.Adam(params, 
                                lr = self.lr,
                                weight_decay = self.weight_decay)
-        # lr_scheduler = get_cosine_schedule_with_warmup(opt, num_warmup_steps=10, 
-        #                                                num_training_steps=self.trainer.max_epochs)
-        # return {"optimizer": opt,
-        #         "lr_scheduler": lr_scheduler}
-        return opt
+            return opt
     
     def tokenize(self, texts: list[str], max_length: int) -> tuple[torch.Tensor]:
         inputs = self.tokenizer(texts, max_length=max_length, padding='max_length', 
@@ -171,12 +195,17 @@ class GLIM(L.LightningModule):
         input_ids, input_mask = self.tokenize(input_text, self.input_text_len-self.prompt_tuning_len)
         tgt_ids, _ = self.tokenize(tgt_text, self.tgt_text_len)
         sentiment_ids = self.encode_labels(sentiment_label)
+        
+        # Get sentence embeddings if available
+        sentence_embedding = batch.get('sentence_embedding', None)  # (n, 768) or None
+        keyword_embedding = batch.get('keyword_embedding', None)    # (n, 3, 768) or None
 
         return (eeg, eeg_mask, prompt_embed, 
                 input_ids, input_mask, tgt_ids,
                 prompt_ids, raw_task_ids, 
                 sentiment_ids,
-                tgt_text, raw_input_text, all_target_texts)
+                tgt_text, raw_input_text, all_target_texts,
+                sentence_embedding, keyword_embedding)
     
     def encode_text(self, src_ids, src_mask):
         text_encoder = self.text_model.get_encoder()  # a general method?
@@ -188,7 +217,7 @@ class GLIM(L.LightningModule):
 
         hidden_states = outputs['last_hidden_state']
         return hidden_states, hidden_mask
-
+    
     def text_decoder_forward(self, src_embeds, src_mask, tgt_ids):
         labels = tgt_ids.detach().clone()
         labels.masked_fill_(labels == self.text_model.config.pad_token_id, -100)  # in-place!
@@ -205,16 +234,29 @@ class GLIM(L.LightningModule):
          input_text_ids, input_text_mask, target_text_ids, 
          prompt_ids, raw_task_ids, 
          sentiment_ids,
-         target_text, raw_input_text, all_target_texts) = self.get_inputs(batch)
-     
-        input_text_embeds, hidden_text_mask = self.encode_text(input_text_ids, input_text_mask)
+         target_text, raw_input_text, all_target_texts,
+         sentence_embedding, keyword_embedding) = self.get_inputs(batch)
         
         eeg_hiddens, _ = self.eeg_encoder(eeg, eeg_mask, prompt_embed)  # TODO: return weights
-
-        (loss_clip, logits_clip, loss_commitment, 
-         eeg_embeds, eeg_emb, input_text_emb) = self.aligner(eeg_hiddens, input_text_embeds, hidden_text_mask)
-
+     
+        # Use sentence embeddings if available and use_sentence_embeddings is True
+        if self.use_sentence_embeddings and sentence_embedding is not None:
+            # Use precomputed sentence embeddings
+            input_text_embeds: torch.Tensor = sentence_embedding
+            hidden_text_mask: torch.Tensor = input_text_mask
+            # pass alignment layer
+            (loss_clip, logits_clip, loss_commitment, 
+             eeg_embeds, eeg_emb, input_text_emb) = self.aligner.forward(eeg_hiddens, input_text_embeds, hidden_text_mask, self.sentence_emb_proj)
+        else:
+            # Use text encoder (original behavior)
+            input_text_embeds, hidden_text_mask = self.encode_text(input_text_ids, input_text_mask)
+            # pass alignment layer
+            (loss_clip, logits_clip, loss_commitment, 
+             eeg_embeds, eeg_emb, input_text_emb) = self.aligner.forward(eeg_hiddens, input_text_embeds, hidden_text_mask)
+            
+        # do the lm loss thing
         loss_lm, logits_lm = self.text_decoder_forward(eeg_embeds, hidden_text_mask, target_text_ids)
+        
         return {'loss_commitment': loss_commitment,            # (1)
                 'loss_clip': loss_clip,                        # (1)
                 'loss_lm': loss_lm,                            # (1)
@@ -279,7 +321,11 @@ class GLIM(L.LightningModule):
         loss_commitment = shared_outputs['loss_commitment']     # (1)
         loss_clip = shared_outputs['loss_clip']                 # (1)
         loss_lm = shared_outputs['loss_lm']                     # (1)
-        loss = self.λ * loss_clip + (1-self.λ) * loss_lm + self.ε * loss_commitment
+        # !!! Remember: we don't need LM loss when 'use_sentence_embeddings' is True
+        if self.use_sentence_embeddings:
+            loss = self.λ * loss_clip + self.ε * loss_commitment
+        else:
+            loss = self.λ * loss_clip + (1-self.λ) * loss_lm + self.ε * loss_commitment
         metrics = {'loss': loss,
                    'loss_commitment': loss_commitment,
                    'loss_clip': loss_clip,              
@@ -307,10 +353,18 @@ class GLIM(L.LightningModule):
         loss_commitment = shared_outputs['loss_commitment']     # (1)
         loss_clip = shared_outputs['loss_clip']                 # (1)
         loss_lm = shared_outputs['loss_lm']                     # (1)
-        metrics = {'loss_commitment': loss_commitment,
-                   'loss_clip': loss_clip,              
-                   'loss_lm': loss_lm,         
-                    } 
+
+        # !!! Remember: we don't need LM loss when 'use_sentence_embeddings' is True
+        if self.use_sentence_embeddings:
+            loss = self.λ * loss_clip + self.ε * loss_commitment
+        else:
+            loss = self.λ * loss_clip + (1-self.λ) * loss_lm + self.ε * loss_commitment
+
+        metrics = { 
+            'loss': loss,
+            'loss_commitment': loss_commitment,
+            'loss_clip': loss_clip,              
+            'loss_lm': loss_lm, } 
 
         retrieval_metrics = self.cal_retrieval_metrics(shared_outputs['logits_clip'], strict=False)  
         # NOTE: only for checkpointing here, allowing smaller batch size
@@ -354,6 +408,7 @@ class GLIM(L.LightningModule):
 
     # @torch.autocast(self.device, dtype=(torch.bfloat16 if self.precision == "bf16-mixed" else torch.half))
     def on_validation_epoch_end(self):
+        return # skip erroneous code
         if (self.current_epoch + 1) % self.full_val_interval == 0 or self.current_epoch == 0:
             # self.val_step_outputs: dict[list[dict[str, tensor]]]
             outputs = default_collate(self.full_val_step_outputs)         # (n_steps, bsz, ...)
@@ -540,6 +595,8 @@ class GLIM(L.LightningModule):
             
             # retrieval accs on groups (unnecessary)
             # if t_key == '<Normal Reading>': # TODO: sample this subset randomly?
+            if self.use_sentence_embeddings is True: 
+                intermediates['eeg_emb_vector'] = self.sentence_emb_proj.forward(intermediates['eeg_emb_vector'])
             _, logits = self.aligner.align_emb_vector(intermediates['eeg_emb_vector'],
                                                         intermediates['text_emb_vector'])
             try:
@@ -607,10 +664,18 @@ class GLIM(L.LightningModule):
         loss_commitment = shared_outputs['loss_commitment']     # (1)
         loss_clip = shared_outputs['loss_clip']                 # (1)
         loss_lm = shared_outputs['loss_lm']                     # (1)
-        metrics = {'loss_commitment': loss_commitment,
-                   'loss_clip': loss_clip,              
-                   'loss_lm': loss_lm,         
-                    } 
+
+        # !!! Remember: we don't need LM loss when 'use_sentence_embeddings' is True
+        if self.use_sentence_embeddings:
+            loss = self.λ * loss_clip + self.ε * loss_commitment
+        else:
+            loss = self.λ * loss_clip + (1-self.λ) * loss_lm + self.ε * loss_commitment
+
+        metrics = { 
+            'loss': loss,
+            'loss_commitment': loss_commitment,
+            'loss_clip': loss_clip,              
+            'loss_lm': loss_lm, } 
         
         retrieval_metrics = self.cal_retrieval_metrics(shared_outputs['logits_clip'], strict=True)  
         metrics.update(retrieval_metrics)
@@ -621,6 +686,7 @@ class GLIM(L.LightningModule):
         self.test_step_outputs.append(outputs)
 
     def on_test_epoch_end(self):
+        return # skip erroneous code
         # self.test_step_outputs: dict[list[dict[str, tensor]]]
         outputs = default_collate(self.test_step_outputs)         # (n_steps, bsz, ...)
         outputs = {k: v.flatten(0,1) for k,v in outputs.items()}      # (n_steps*bsz, ...)

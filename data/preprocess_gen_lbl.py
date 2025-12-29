@@ -3,6 +3,7 @@ import pandas as pd
 from generate_sentiment import generate as gen_senti_lbl
 import generate_embedding
 import pickle
+import os
 
 data_dir = './datasets/ZuCo'
 zuco1_task1_lbl_path = data_dir + '/task_materials/sentiment_labels_task1.csv'
@@ -11,7 +12,11 @@ zuco1_task3_lbl_path = data_dir + '/task_materials/relations_labels_task3.csv'
 zuco1_task1_mats_path = data_dir
 
 # tmp path (saving path)
+# User can modify this path to save outputs to a different location
+# Default: './tmp' for local storage
 tmp_path = '/nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp'
+# Create tmp directory if it doesn't exist
+os.makedirs(tmp_path, exist_ok=True)
 
 ########################
 """ ZuCO 1.0 task 1 """

@@ -9,7 +9,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from preprocess_gen_lbl import revise_typo
 
 # tmp path (saving path)
+# User can modify this path to save outputs to a different location
+# Default: './tmp' for local storage
 tmp_path = '/nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp'
+# Create tmp directory if it doesn't exist
+os.makedirs(tmp_path, exist_ok=True)
 
 # select specific subjects (None for all subjects)
 select_subjs = ['ZAB']
@@ -48,7 +52,7 @@ df_eeg['text'] = df_eeg['text'].apply(revise_typo)
 # Merge the dataframes on 'text', 'dataset', 'task', and 'subject'
 # The EEG data uses 'text' column, while labels use 'input text'
 df_merged = pd.merge(df_eeg, 
-                     df_labels[['input text', 'sentiment label', 'text uid', 'dataset', 'task']], 
+                     df_labels[['input text', 'sentiment label', 'text uid', 'keyword_1', 'keyword_2', 'keyword_3', 'dataset', 'task']], 
                      left_on=['text', 'dataset', 'task'], 
                      right_on=['input text', 'dataset', 'task'], 
                      how='inner')

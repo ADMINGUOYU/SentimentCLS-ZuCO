@@ -206,19 +206,34 @@ class Aligner(nn.Module):
         self.commitment_loss_key = commitment_loss_key
         self.use_y_mask = use_y_mask
 
-    def forward(self, x, y, y_mask):
+    def forward(self, x, y, y_mask, x_to_y_proj = None):
         '''
         inputs:
         - x:        (n, l, d)  `eeg` hidden states, output of eeg encoder
         - y:        (n, l, e)  `input_text` hidden states, `encoder_output` of text model
         - y_mask:   (n, l)      
         '''
+        # convert to (project) embedding length
         x = self.in_proj(x)  # (n, l, e)
-        loss_commitment = self.align_embeds(x, y, y_mask)
-        x_mask = y_mask if (self.training and self.use_y_mask) else None
-        x, x_emb = self.embed_eeg(x, x_mask)
-        y_emb = self.embed_text(y, y_mask)
-        loss_clip, logits_clip = self.align_emb_vector(x_emb, y_emb)
+        if (x_to_y_proj is not None):
+            # embed
+            x_mask = y_mask if (self.training and self.use_y_mask) else None
+            x, x_emb = self.embed_eeg(x, x_mask)
+            y_emb = y
+            # Project from (embed_dim * hidden_eeg_len) to SBERT_EMBEDDING_DIM
+            x_emb_proj:torch.Tensor = x_to_y_proj.forward(x_emb)
+
+            # loss
+            loss_commitment = self.align_embeds(x_emb_proj, y_emb, y_mask)
+            # contra loss
+            loss_clip, logits_clip = self.align_emb_vector(x_emb_proj, y_emb)
+        else:
+            # original processing flow
+            loss_commitment = self.align_embeds(x, y, y_mask)
+            x_mask = y_mask if (self.training and self.use_y_mask) else None
+            x, x_emb = self.embed_eeg(x, x_mask)
+            y_emb = self.embed_text(y, y_mask)
+            loss_clip, logits_clip = self.align_emb_vector(x_emb, y_emb)
         return loss_clip, logits_clip, loss_commitment, x, x_emb, y_emb
     
     def embed_eeg(self, x, mask=None):
@@ -247,6 +262,10 @@ class Aligner(nn.Module):
 
         target = torch.arange(bsz, device=x_emb.device)  # (n)
         
+        # before loss calculation normalize
+        x_logits = torch.nn.functional.normalize(x_logits, p = 2, dim = -1)
+        y_logits = torch.nn.functional.normalize(y_logits, p = 2, dim = -1)
+        # NOTE!!!!!! target is meant to be in type INT, so no normalization
         loss = (F.cross_entropy(x_logits, target) + F.cross_entropy(y_logits, target)) / 2
         return loss, x_logits.detach()
     
@@ -255,6 +274,10 @@ class Aligner(nn.Module):
             mask = ~y_mask.bool().unsqueeze(-1).expand_as(x)
             x = x.masked_fill_(mask, 0)
             y = y.masked_fill_(mask, 0)
+
+        # before loss calculation normalize
+        x = torch.nn.functional.normalize(x, p = 2, dim = -1)
+        y = torch.nn.functional.normalize(y, p = 2, dim = -1)
         if self.commitment_loss_key == 'mse':
             loss = F.mse_loss(x, y)
         else:

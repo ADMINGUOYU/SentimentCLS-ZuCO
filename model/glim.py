@@ -54,6 +54,7 @@ class GLIM(L.LightningModule):
                  weight_decay = 0,
                  full_val_interval = 10,
                  bs_retrieval = 24,
+                 use_sentence_embeddings = False,
                 ):
         
         super().__init__()
@@ -71,6 +72,7 @@ class GLIM(L.LightningModule):
         self.bsz_val = bsz_val
         self.full_val_interval = full_val_interval
         self.bsz_retrieval = bs_retrieval
+        self.use_sentence_embeddings = use_sentence_embeddings
         self.prompt_keys = {
             # 'task': ['<Normal Reading>'] + ['<Relation Extraction>', '<Sentiment Classification>',],
             'task': ['<UNK>'] + ['<NR>', '<TSR>'],
@@ -99,6 +101,10 @@ class GLIM(L.LightningModule):
         self.use_y_mask = use_y_mask
         self.text_model_id = text_model_id
         self.embed_dim = embed_dim
+        
+        # Add a projection layer for sentence embeddings (768 -> embed_dim)
+        if use_sentence_embeddings:
+            self.sentence_emb_proj = nn.Linear(768, embed_dim)
 
         self.save_hyperparameters(logger=True)
 
@@ -171,12 +177,17 @@ class GLIM(L.LightningModule):
         input_ids, input_mask = self.tokenize(input_text, self.input_text_len-self.prompt_tuning_len)
         tgt_ids, _ = self.tokenize(tgt_text, self.tgt_text_len)
         sentiment_ids = self.encode_labels(sentiment_label)
+        
+        # Get sentence embeddings if available
+        sentence_embedding = batch.get('sentence_embedding', None)  # (n, 768) or None
+        keyword_embedding = batch.get('keyword_embedding', None)    # (n, 3, 768) or None
 
         return (eeg, eeg_mask, prompt_embed, 
                 input_ids, input_mask, tgt_ids,
                 prompt_ids, raw_task_ids, 
                 sentiment_ids,
-                tgt_text, raw_input_text, all_target_texts)
+                tgt_text, raw_input_text, all_target_texts,
+                sentence_embedding, keyword_embedding)
     
     def encode_text(self, src_ids, src_mask):
         text_encoder = self.text_model.get_encoder()  # a general method?
@@ -188,6 +199,21 @@ class GLIM(L.LightningModule):
 
         hidden_states = outputs['last_hidden_state']
         return hidden_states, hidden_mask
+    
+    def encode_sentence_embeddings(self, sentence_embeddings):
+        """
+        Convert sentence embeddings (768-dim) to model embedding space (embed_dim).
+        Expand to sequence format for alignment: (n, 768) -> (n, 1, embed_dim)
+        """
+        # Move to device and ensure correct dtype
+        sentence_embeddings = sentence_embeddings.to(self.device)
+        # Project from 768 to embed_dim
+        projected = self.sentence_emb_proj(sentence_embeddings)  # (n, embed_dim)
+        # Expand to sequence format: (n, embed_dim) -> (n, 1, embed_dim)
+        expanded = projected.unsqueeze(1)  # (n, 1, embed_dim)
+        # Create mask (all ones since we have valid embeddings)
+        mask = torch.ones(sentence_embeddings.shape[0], 1, device=self.device, dtype=torch.int)
+        return expanded, mask
 
     def text_decoder_forward(self, src_embeds, src_mask, tgt_ids):
         labels = tgt_ids.detach().clone()
@@ -205,9 +231,16 @@ class GLIM(L.LightningModule):
          input_text_ids, input_text_mask, target_text_ids, 
          prompt_ids, raw_task_ids, 
          sentiment_ids,
-         target_text, raw_input_text, all_target_texts) = self.get_inputs(batch)
+         target_text, raw_input_text, all_target_texts,
+         sentence_embedding, keyword_embedding) = self.get_inputs(batch)
      
-        input_text_embeds, hidden_text_mask = self.encode_text(input_text_ids, input_text_mask)
+        # Use sentence embeddings if available and use_sentence_embeddings is True
+        if self.use_sentence_embeddings and sentence_embedding is not None:
+            # Use precomputed sentence embeddings
+            input_text_embeds, hidden_text_mask = self.encode_sentence_embeddings(sentence_embedding)
+        else:
+            # Use text encoder (original behavior)
+            input_text_embeds, hidden_text_mask = self.encode_text(input_text_ids, input_text_mask)
         
         eeg_hiddens, _ = self.eeg_encoder(eeg, eeg_mask, prompt_embed)  # TODO: return weights
 

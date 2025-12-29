@@ -52,6 +52,12 @@ def parse_args():
         help='Path to the merged dataset pickle file'
     )
     parser.add_argument(
+        '--embeddings_path',
+        type=str,
+        default=None,
+        help='Path to the embeddings pickle file (optional, for sentence embedding alignment)'
+    )
+    parser.add_argument(
         '--num_workers',
         type=int,
         default=4,
@@ -101,6 +107,11 @@ def parse_args():
         type=float,
         default=0.1,
         help='Dropout rate'
+    )
+    parser.add_argument(
+        '--use_sentence_embeddings',
+        action='store_true',
+        help='Use precomputed sentence embeddings for alignment instead of text encoder'
     )
     
     # Training arguments
@@ -324,6 +335,7 @@ def main():
     print("\nInitializing data module...")
     datamodule = GLIMDataModule(
         data_path=args.data_path,
+        embeddings_path=args.embeddings_path,
         eval_noise_input=False,
         bsz_train=args.batch_size,
         bsz_val=args.val_batch_size,
@@ -351,7 +363,8 @@ def main():
         bsz_val=args.val_batch_size,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        full_val_interval=args.full_val_interval
+        full_val_interval=args.full_val_interval,
+        use_sentence_embeddings=args.use_sentence_embeddings
     )
     
     # Setup logger

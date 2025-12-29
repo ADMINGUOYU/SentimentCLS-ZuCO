@@ -2,6 +2,7 @@ import os
 import torch
 import numpy as np
 import pandas as pd
+import pickle
 import lightning as pl
 import torch.distributed as dist
 from typing import Literal, Iterator, Union
@@ -12,6 +13,7 @@ class GLIMDataModule(pl.LightningDataModule):
     
     def __init__(self, 
                  data_path: os.PathLike,
+                 embeddings_path: os.PathLike = None,
                  eval_noise_input: bool = False,
                  bsz_train = 64,
                  bsz_val = 24,
@@ -23,6 +25,7 @@ class GLIMDataModule(pl.LightningDataModule):
         super().__init__()
         assert os.path.exists(data_path)
         self.data_path = data_path
+        self.embeddings_path = embeddings_path
         self.eval_noise_input = eval_noise_input
         self.bsz_train = bsz_train
         self.bsz_val = bsz_val  
@@ -41,12 +44,20 @@ class GLIMDataModule(pl.LightningDataModule):
             local_rank = '0'
         print(f'[Rank {local_rank}][{self.__class__.__name__}] running `setup()`...', end='\n')
         df = pd.read_pickle(self.data_path)
+        
+        # Load embeddings if path is provided
+        embeddings_dict = None
+        if self.embeddings_path is not None and os.path.exists(self.embeddings_path):
+            with open(self.embeddings_path, 'rb') as f:
+                embeddings_dict = pickle.load(f)
+            print(f'[Rank {local_rank}] Loaded embeddings from {self.embeddings_path}')
+        
         if stage == "fit":
-            self.train_set = ZuCoDataset(df, 'train')
-            self.val_set = ZuCoDataset(df, 'val', self.eval_noise_input)
+            self.train_set = ZuCoDataset(df, 'train', embeddings_dict=embeddings_dict)
+            self.val_set = ZuCoDataset(df, 'val', embeddings_dict=embeddings_dict, eval_noise_input=self.eval_noise_input)
             self.n_target_text = self.val_set.n_target_text
         elif stage == "test":
-            self.test_set = ZuCoDataset(df, 'test', self.eval_noise_input)
+            self.test_set = ZuCoDataset(df, 'test', embeddings_dict=embeddings_dict, eval_noise_input=self.eval_noise_input)
             self.n_target_text = self.test_set.n_target_text
         print(f'[Rank {local_rank}][{self.__class__.__name__}] running `setup()`...Done!','\U0001F60B'*3)
             
@@ -345,6 +356,7 @@ class ZuCoDataset(Dataset):
     def __init__(self, 
                  df: pd.DataFrame,
                  phase: Literal['train', 'val', 'test'],
+                 embeddings_dict: dict = None,
                  eval_noise_input: bool = False,
                  ):
         # pt_target_keys = ['input text']
@@ -357,12 +369,12 @@ class ZuCoDataset(Dataset):
             target_keys = pt_target_keys
             data_dicts = []
             for target_key in target_keys:
-                data = self.__fetch_from_df(df, target_key)
+                data = self.__fetch_from_df(df, target_key, embeddings_dict)
                 data_dicts.append(data)
             data = collate_fn(data_dicts)
             targets_tuple_list = [(text, ) for text in data['target text']]
         else:
-            data = self.__fetch_from_df(df, "input text")
+            data = self.__fetch_from_df(df, "input text", embeddings_dict)
             if eval_noise_input:
                 data['eeg']
             target_lists = [df[key].values.tolist() for key in pt_target_keys]
@@ -381,7 +393,7 @@ class ZuCoDataset(Dataset):
         self.n_target_text = len(pt_target_keys)
         self.data = data
         
-    def __fetch_from_df(self, df, target_key):
+    def __fetch_from_df(self, df, target_key, embeddings_dict=None):
         
 
         input_template = "To English: <MASK>"
@@ -400,7 +412,28 @@ class ZuCoDataset(Dataset):
         sentiment_label  = df['sentiment label'].values.tolist()
         eeg = df['eeg'].tolist()
         mask = df['mask'].tolist()
-        return {'eeg': eeg,                   # list[np.arrary], [(l, c),]
+        
+        # Load embeddings if available
+        sentence_embeddings = []
+        keyword_embeddings = []
+        keyword_texts = []
+        if embeddings_dict is not None:
+            for uid in text_uid:
+                if uid in embeddings_dict:
+                    sentence_embeddings.append(embeddings_dict[uid]['sentence'])
+                    keyword_embeddings.append(embeddings_dict[uid]['keyword'])
+                else:
+                    # If embedding not found, use zeros as placeholder
+                    sentence_embeddings.append(np.zeros(768, dtype=np.float32))
+                    keyword_embeddings.append(np.zeros((3, 768), dtype=np.float32))
+            
+            # Get keyword texts from dataframe
+            if 'keyword_1' in df.columns:
+                keyword_texts = list(zip(df['keyword_1'].tolist(), 
+                                        df['keyword_2'].tolist(), 
+                                        df['keyword_3'].tolist()))
+        
+        result = {'eeg': eeg,                   # list[np.arrary], [(l, c),]
                 'mask': mask,                 # list[np.arrary], [(l),], 1 for unmasked; 0 for masked
                 'prompt': prompt,             # list[tuple[str]], [('task', 'dataset', 'subject')]
                 'text uid': text_uid,         # list[int]
@@ -410,12 +443,20 @@ class ZuCoDataset(Dataset):
                 'raw task key': raw_t_keys,                                 # str
                 'raw input text': raw_input_text,                           # str
                 }
+        
+        # Add embeddings if available
+        if embeddings_dict is not None:
+            result['sentence_embedding'] = sentence_embeddings  # list[np.array], [(768,)]
+            result['keyword_embedding'] = keyword_embeddings    # list[np.array], [(3, 768)]
+            result['keyword_text'] = keyword_texts              # list[tuple[str]], [(kw1, kw2, kw3)]
+        
+        return result
 
     def __len__(self):
         return len(self.data['eeg'])
     
     def __getitem__(self, idx):
-        return {
+        item = {
                 'eeg': torch.from_numpy(self.data['eeg'][idx]),       # tensor, float32, (*, l, c)
                 'mask': torch.from_numpy(self.data['mask'][idx]),     # tensor, int8, (*, l), 1 for unmasked; 0 for masked
                 'prompt': self.data['prompt'][idx],             # tuple[str], [('task', 'dataset', 'subject')]
@@ -427,6 +468,16 @@ class ZuCoDataset(Dataset):
                 'raw input text': self.data['raw input text'][idx],     # str
                 'all target texts': self.data['all target texts'][idx],   # tuple(str)
                 }
+        
+        # Add embeddings if available
+        if 'sentence_embedding' in self.data:
+            item['sentence_embedding'] = torch.from_numpy(self.data['sentence_embedding'][idx])  # tensor, float32, (768,)
+        if 'keyword_embedding' in self.data:
+            item['keyword_embedding'] = torch.from_numpy(self.data['keyword_embedding'][idx])    # tensor, float32, (3, 768)
+        if 'keyword_text' in self.data:
+            item['keyword_text'] = self.data['keyword_text'][idx]  # tuple[str], (kw1, kw2, kw3)
+        
+        return item
 
 
 def collate_fn(batch_list: list[dict]) -> dict:

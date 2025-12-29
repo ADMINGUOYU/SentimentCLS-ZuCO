@@ -48,7 +48,7 @@ df_eeg['text'] = df_eeg['text'].apply(revise_typo)
 # Merge the dataframes on 'text', 'dataset', 'task', and 'subject'
 # The EEG data uses 'text' column, while labels use 'input text'
 df_merged = pd.merge(df_eeg, 
-                     df_labels[['input text', 'sentiment label', 'text uid', 'dataset', 'task']], 
+                     df_labels[['input text', 'sentiment label', 'text uid', 'keyword_1', 'keyword_2', 'keyword_3', 'dataset', 'task']], 
                      left_on=['text', 'dataset', 'task'], 
                      right_on=['input text', 'dataset', 'task'], 
                      how='inner')

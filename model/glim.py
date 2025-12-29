@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 import pandas as pd
@@ -17,6 +18,8 @@ from transformers.modeling_outputs import BaseModelOutput
 
 from .modules import PromptEmbedder, EEGEncoder, Aligner
 
+# Constants
+SBERT_EMBEDDING_DIM = 768  # Dimension of SBERT (all-mpnet-base-v2) embeddings
 
 
 class GLIM(L.LightningModule):
@@ -102,9 +105,9 @@ class GLIM(L.LightningModule):
         self.text_model_id = text_model_id
         self.embed_dim = embed_dim
         
-        # Add a projection layer for sentence embeddings (768 -> embed_dim)
+        # Add a projection layer for sentence embeddings (SBERT_EMBEDDING_DIM -> embed_dim)
         if use_sentence_embeddings:
-            self.sentence_emb_proj = nn.Linear(768, embed_dim)
+            self.sentence_emb_proj = nn.Linear(SBERT_EMBEDDING_DIM, embed_dim)
 
         self.save_hyperparameters(logger=True)
 
@@ -202,12 +205,12 @@ class GLIM(L.LightningModule):
     
     def encode_sentence_embeddings(self, sentence_embeddings):
         """
-        Convert sentence embeddings (768-dim) to model embedding space (embed_dim).
-        Expand to sequence format for alignment: (n, 768) -> (n, 1, embed_dim)
+        Convert sentence embeddings (SBERT_EMBEDDING_DIM) to model embedding space (embed_dim).
+        Expand to sequence format for alignment: (n, SBERT_EMBEDDING_DIM) -> (n, 1, embed_dim)
         """
         # Move to device and ensure correct dtype
         sentence_embeddings = sentence_embeddings.to(self.device)
-        # Project from 768 to embed_dim
+        # Project from SBERT_EMBEDDING_DIM to embed_dim
         projected = self.sentence_emb_proj(sentence_embeddings)  # (n, embed_dim)
         # Expand to sequence format: (n, embed_dim) -> (n, 1, embed_dim)
         expanded = projected.unsqueeze(1)  # (n, 1, embed_dim)

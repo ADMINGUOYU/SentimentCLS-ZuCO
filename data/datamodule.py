@@ -3,10 +3,14 @@ import torch
 import numpy as np
 import pandas as pd
 import pickle
+import warnings
 import lightning as pl
 import torch.distributed as dist
 from typing import Literal, Iterator, Union
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
+
+# Constants
+SBERT_EMBEDDING_DIM = 768  # Dimension of SBERT (all-mpnet-base-v2) embeddings
 
 
 class GLIMDataModule(pl.LightningDataModule):
@@ -424,8 +428,9 @@ class ZuCoDataset(Dataset):
                     keyword_embeddings.append(embeddings_dict[uid]['keyword'])
                 else:
                     # If embedding not found, use zeros as placeholder
-                    sentence_embeddings.append(np.zeros(768, dtype=np.float32))
-                    keyword_embeddings.append(np.zeros((3, 768), dtype=np.float32))
+                    warnings.warn(f"Embedding not found for text_uid {uid}, using zero placeholder")
+                    sentence_embeddings.append(np.zeros(SBERT_EMBEDDING_DIM, dtype=np.float32))
+                    keyword_embeddings.append(np.zeros((3, SBERT_EMBEDDING_DIM), dtype=np.float32))
             
             # Get keyword texts from dataframe
             if 'keyword_1' in df.columns:

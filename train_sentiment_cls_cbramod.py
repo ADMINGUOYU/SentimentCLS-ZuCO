@@ -94,6 +94,20 @@ def parse_args():
         help='Path to pretrained CBraMod weights'
     )
     
+    # Sample rate arguments
+    parser.add_argument(
+        '--src_sample_rate',
+        type=int,
+        default=128,
+        help='Source EEG sample rate from ZuCo preprocessing (default: 128Hz)'
+    )
+    parser.add_argument(
+        '--tgt_sample_rate',
+        type=int,
+        default=200,
+        help='Target sample rate expected by CBraMod (default: 200Hz)'
+    )
+    
     # MLP classifier arguments
     parser.add_argument(
         '--hidden_dims',
@@ -259,7 +273,7 @@ def display_label_distribution(datamodule):
         print(f"  {label_name} (ID: {label_id}): {count} samples ({percentage:.2f}%)")
     
     # Display class weights if weighted sampler is enabled
-    if datamodule.use_weighted_sampler:
+    if getattr(datamodule, 'use_weighted_sampler', False):
         print("\nWeighted sampling enabled - computed class weights:")
         total_samples = len(sentiment_ids)
         num_classes = len([k for k in label_counts.keys() if k != -1])
@@ -346,6 +360,7 @@ def main():
     print(f"  - nhead: {args.nhead}")
     if args.pretrained_weights:
         print(f"  - pretrained_weights: {args.pretrained_weights}")
+    print(f"Sample rate: {args.src_sample_rate}Hz -> {args.tgt_sample_rate}Hz (resampling)")
     print(f"MLP hidden dims: {args.hidden_dims}")
     print(f"Batch size: {args.batch_size}")
     print(f"Learning rate: {args.lr}")
@@ -392,7 +407,9 @@ def main():
         weight_decay=args.weight_decay,
         warm_up_step=args.warm_up_step,
         pretrained_weights=args.pretrained_weights,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        src_sample_rate=args.src_sample_rate,
+        tgt_sample_rate=args.tgt_sample_rate
     )
     
     print(f"Model created with:")
@@ -442,7 +459,7 @@ def main():
     if torch.cuda.is_available():
         device = [args.device]
     else:
-        device = 1
+        device = 'auto'
     
     trainer = L.Trainer(
         max_epochs=args.max_epochs,

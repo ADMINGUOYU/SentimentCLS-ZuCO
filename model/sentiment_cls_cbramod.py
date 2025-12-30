@@ -8,6 +8,7 @@ Key differences from GLIM-based sentiment classifier:
 1. Uses CBraMod backbone instead of GLIM encoder
 2. No subject/task/dataset embeddings - processes raw EEG signals
 3. Uses CosineLR scheduler as in GLIM
+4. Resamples EEG from 128Hz (ZuCo preprocessing) to 200Hz (CBraMod expected)
 """
 
 import torch
@@ -28,14 +29,15 @@ class SentimentCLSCBraMod(L.LightningModule):
     
     This model:
     - Uses CBraMod backbone for EEG feature extraction
+    - Resamples EEG from source sample rate (128Hz) to target rate (200Hz)
     - Applies an MLP classifier for sentiment classification
     - Uses CosineLR scheduler
     - Uses weighted sampling for class imbalance
     
     Args:
         num_channels: Number of EEG channels (default: 105)
-        patch_size: Size of each EEG patch (default: 200, sampling rate)
-        num_patches: Number of patches per channel (default: 1)
+        patch_size: Size of each EEG patch in samples (default: 200, 1 second at 200Hz)
+        num_patches: Number of patches/segments per channel (default: 1)
         d_model: Hidden dimension of CBraMod (default: 200)
         dim_feedforward: FFN hidden dimension (default: 800)
         n_layer: Number of transformer layers (default: 12)
@@ -47,6 +49,8 @@ class SentimentCLSCBraMod(L.LightningModule):
         weight_decay: Weight decay for optimizer (default: 1e-4)
         warm_up_step: Number of warmup steps for CosineLR scheduler (default: None)
         pretrained_weights: Path to pretrained CBraMod weights (default: None)
+        src_sample_rate: Source EEG sample rate from ZuCo preprocessing (default: 128)
+        tgt_sample_rate: Target sample rate expected by CBraMod (default: 200)
     """
     
     def __init__(
@@ -65,7 +69,9 @@ class SentimentCLSCBraMod(L.LightningModule):
         weight_decay: float = 1e-4,
         warm_up_step: int = None,
         pretrained_weights: str = None,
-        batch_size: int = 24
+        batch_size: int = 24,
+        src_sample_rate: int = 128,
+        tgt_sample_rate: int = 200
     ):
         super().__init__()
         
@@ -82,6 +88,8 @@ class SentimentCLSCBraMod(L.LightningModule):
         self.weight_decay = weight_decay
         self.warm_up_step = warm_up_step
         self.batch_size = batch_size
+        self.src_sample_rate = src_sample_rate
+        self.tgt_sample_rate = tgt_sample_rate
         
         # CBraMod backbone
         self.backbone = CBraMod(
@@ -96,8 +104,7 @@ class SentimentCLSCBraMod(L.LightningModule):
         
         # Load pretrained weights if provided
         if pretrained_weights is not None:
-            state_dict = torch.load(pretrained_weights, map_location='cpu')
-            self.backbone.load_state_dict(state_dict)
+            self._load_pretrained_weights(pretrained_weights)
         
         # Remove the proj_out layer from backbone (use Identity)
         self.backbone.proj_out = nn.Identity()
@@ -137,44 +144,125 @@ class SentimentCLSCBraMod(L.LightningModule):
         # Save hyperparameters
         self.save_hyperparameters()
     
+    def _load_pretrained_weights(self, pretrained_weights: str):
+        """
+        Load pretrained CBraMod weights from checkpoint file.
+        
+        Handles different checkpoint formats:
+        - Direct state_dict
+        - Checkpoint with 'state_dict' key
+        - Checkpoint with 'model_state_dict' key
+        
+        Args:
+            pretrained_weights: Path to the pretrained weights file (.pth)
+        """
+        print(f"Loading pretrained CBraMod weights from: {pretrained_weights}")
+        checkpoint = torch.load(pretrained_weights, map_location='cpu', weights_only=False)
+        
+        # Handle different checkpoint formats
+        if isinstance(checkpoint, dict):
+            if 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            else:
+                # Assume the checkpoint is a direct state_dict
+                state_dict = checkpoint
+        else:
+            state_dict = checkpoint
+        
+        # Remove 'backbone.' prefix if present (from Lightning checkpoints)
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith('backbone.'):
+                new_key = key[len('backbone.'):]
+                new_state_dict[new_key] = value
+            else:
+                new_state_dict[key] = value
+        
+        # Load weights (strict=False allows partial loading)
+        missing_keys, unexpected_keys = self.backbone.load_state_dict(new_state_dict, strict=False)
+        
+        if missing_keys:
+            print(f"  Missing keys: {missing_keys}")
+        if unexpected_keys:
+            print(f"  Unexpected keys (ignored): {unexpected_keys}")
+        print("  Pretrained weights loaded successfully!")
+    
+    def _resample_eeg(self, eeg, src_len, tgt_len):
+        """
+        Resample EEG signal from source length to target length using linear interpolation.
+        
+        Args:
+            eeg: EEG tensor of shape (batch_size, channels, seq_len)
+            src_len: Current sequence length
+            tgt_len: Target sequence length
+            
+        Returns:
+            Resampled EEG tensor of shape (batch_size, channels, tgt_len)
+        """
+        if src_len == tgt_len:
+            return eeg
+        
+        # Use interpolate for resampling (linear interpolation)
+        # Input shape for interpolate: (N, C, L) -> (N, C, L_out)
+        eeg_resampled = F.interpolate(
+            eeg, 
+            size=tgt_len, 
+            mode='linear', 
+            align_corners=False
+        )
+        return eeg_resampled
+    
     def _reshape_eeg_for_cbramod(self, eeg):
         """
-        Reshape EEG data from GLIM format to CBraMod format.
+        Reshape and resample EEG data from GLIM format to CBraMod format.
         
-        GLIM format: (batch_size, seq_len, channels) where seq_len=1280, channels=128
-        CBraMod format: (batch_size, num_channels, num_patches, patch_size)
+        GLIM format: (batch_size, seq_len, channels) where seq_len=1280 at 128Hz, channels=128
+        CBraMod format: (batch_size, num_channels, num_patches, patch_size) at 200Hz
         
-        We need to:
+        Steps:
         1. Transpose to (batch_size, channels, seq_len)
-        2. Reshape/resample to (batch_size, num_channels, num_patches, patch_size)
+        2. Resample from 128Hz to 200Hz
+        3. Adjust channels (pad or truncate to num_channels)
+        4. Reshape time points into patches
+        
+        Args:
+            eeg: EEG tensor from GLIM dataloader (batch_size, seq_len, channels)
+            
+        Returns:
+            Reshaped EEG tensor (batch_size, num_channels, num_patches, patch_size)
         """
         batch_size, seq_len, channels = eeg.shape
         
         # Transpose to (batch_size, channels, seq_len)
         eeg = eeg.transpose(1, 2)  # (batch_size, channels, seq_len)
         
-        # For CBraMod, we need to reshape to (batch_size, num_channels, num_patches, patch_size)
-        # The ZuCo data has 128 channels and 1280 time points
-        # We'll use num_channels channels and reshape time points into patches
+        # Resample from src_sample_rate (128Hz) to tgt_sample_rate (200Hz)
+        # Calculate target length after resampling
+        tgt_seq_len = int(seq_len * self.tgt_sample_rate / self.src_sample_rate)
+        eeg = self._resample_eeg(eeg, seq_len, tgt_seq_len)
         
-        # Limit channels if needed
+        # Adjust channels if needed
         if channels > self.num_channels:
             eeg = eeg[:, :self.num_channels, :]
         elif channels < self.num_channels:
             # Pad with zeros if we have fewer channels
-            padding = torch.zeros(batch_size, self.num_channels - channels, seq_len, device=eeg.device)
+            padding = torch.zeros(batch_size, self.num_channels - channels, tgt_seq_len, 
+                                device=eeg.device, dtype=eeg.dtype)
             eeg = torch.cat([eeg, padding], dim=1)
         
         # Reshape time points into patches
         # Calculate the total points we need: num_patches * patch_size
         target_length = self.num_patches * self.patch_size
         
-        if seq_len >= target_length:
-            # Truncate or select
+        if tgt_seq_len >= target_length:
+            # Truncate to target length
             eeg = eeg[:, :, :target_length]
         else:
             # Pad with zeros
-            padding = torch.zeros(batch_size, self.num_channels, target_length - seq_len, device=eeg.device)
+            padding = torch.zeros(batch_size, self.num_channels, target_length - tgt_seq_len, 
+                                device=eeg.device, dtype=eeg.dtype)
             eeg = torch.cat([eeg, padding], dim=2)
         
         # Reshape to (batch_size, num_channels, num_patches, patch_size)
@@ -370,10 +458,13 @@ class SentimentCLSCBraMod(L.LightningModule):
                 params,
                 lr=self.lr
             )
+            # Calculate total training steps (epochs * steps_per_epoch)
+            # Note: estimated_steps uses max_epochs since steps_per_epoch varies by dataloader
+            estimated_steps = self.trainer.estimated_stepping_batches
             lr_scheduler = get_cosine_schedule_with_warmup(
                 opt,
                 num_warmup_steps=self.warm_up_step,
-                num_training_steps=self.trainer.max_epochs
+                num_training_steps=estimated_steps
             )
             return {
                 "optimizer": opt,

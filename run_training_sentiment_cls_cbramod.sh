@@ -2,6 +2,7 @@
 
 # Training script for CBraMod sentiment classifier
 # Uses GLIM dataloader with weighted sampling
+# Resamples EEG from 128Hz to 200Hz for CBraMod
 
 python train_sentiment_cls_cbramod.py \
     --data_path ./data/tmp/zuco_merged.df \
@@ -12,6 +13,8 @@ python train_sentiment_cls_cbramod.py \
     --dim_feedforward 800 \
     --n_layer 12 \
     --nhead 8 \
+    --src_sample_rate 128 \
+    --tgt_sample_rate 200 \
     --hidden_dims 512 256 \
     --dropout 0.3 \
     --batch_size 24 \

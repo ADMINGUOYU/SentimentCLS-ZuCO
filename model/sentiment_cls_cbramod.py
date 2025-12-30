@@ -157,6 +157,8 @@ class SentimentCLSCBraMod(L.LightningModule):
             pretrained_weights: Path to the pretrained weights file (.pth)
         """
         print(f"Loading pretrained CBraMod weights from: {pretrained_weights}")
+        # Note: weights_only=False is required to load complex checkpoint formats
+        # Only load checkpoints from trusted sources
         checkpoint = torch.load(pretrained_weights, map_location='cpu', weights_only=False)
         
         # Handle different checkpoint formats
@@ -242,8 +244,8 @@ class SentimentCLSCBraMod(L.LightningModule):
         
         # Resample only if source and target sample rates differ
         if self.src_sample_rate != self.tgt_sample_rate:
-            # Calculate target length after resampling
-            tgt_seq_len = int(seq_len * self.tgt_sample_rate / self.src_sample_rate)
+            # Calculate target length after resampling (use round for precision)
+            tgt_seq_len = round(seq_len * self.tgt_sample_rate / self.src_sample_rate)
             eeg = self._resample_eeg(eeg, seq_len, tgt_seq_len)
         else:
             # No resampling needed
@@ -465,8 +467,7 @@ class SentimentCLSCBraMod(L.LightningModule):
                 lr=self.lr,
                 weight_decay=self.weight_decay
             )
-            # Calculate total training steps (epochs * steps_per_epoch)
-            # Note: estimated_steps uses max_epochs since steps_per_epoch varies by dataloader
+            # Get total training steps (accounts for dataloader size and epochs)
             estimated_steps = self.trainer.estimated_stepping_batches
             lr_scheduler = get_cosine_schedule_with_warmup(
                 opt,

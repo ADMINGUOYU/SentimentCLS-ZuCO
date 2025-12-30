@@ -273,7 +273,7 @@ def display_label_distribution(datamodule):
         print(f"  {label_name} (ID: {label_id}): {count} samples ({percentage:.2f}%)")
     
     # Display class weights if weighted sampler is enabled
-    if getattr(datamodule, 'use_weighted_sampler', False):
+    if datamodule.use_weighted_sampler:
         print("\nWeighted sampling enabled - computed class weights:")
         total_samples = len(sentiment_ids)
         num_classes = len([k for k in label_counts.keys() if k != -1])
@@ -360,7 +360,10 @@ def main():
     print(f"  - nhead: {args.nhead}")
     if args.pretrained_weights:
         print(f"  - pretrained_weights: {args.pretrained_weights}")
-    print(f"Sample rate: {args.src_sample_rate}Hz -> {args.tgt_sample_rate}Hz (resampling)")
+    if args.src_sample_rate != args.tgt_sample_rate:
+        print(f"Sample rate: {args.src_sample_rate}Hz -> {args.tgt_sample_rate}Hz (resampling enabled)")
+    else:
+        print(f"Sample rate: {args.src_sample_rate}Hz (no resampling needed)")
     print(f"MLP hidden dims: {args.hidden_dims}")
     print(f"Batch size: {args.batch_size}")
     print(f"Learning rate: {args.lr}")

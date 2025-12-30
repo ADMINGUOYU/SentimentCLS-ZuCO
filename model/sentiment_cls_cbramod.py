@@ -216,16 +216,18 @@ class SentimentCLSCBraMod(L.LightningModule):
     
     def _reshape_eeg_for_cbramod(self, eeg):
         """
-        Reshape and resample EEG data from GLIM format to CBraMod format.
+        Reshape and optionally resample EEG data from GLIM format to CBraMod format.
         
-        GLIM format: (batch_size, seq_len, channels) where seq_len=1280 at 128Hz, channels=128
-        CBraMod format: (batch_size, num_channels, num_patches, patch_size) at 200Hz
+        GLIM format: (batch_size, seq_len, channels)
+        CBraMod format: (batch_size, num_channels, num_patches, patch_size)
         
         Steps:
         1. Transpose to (batch_size, channels, seq_len)
-        2. Resample from 128Hz to 200Hz
+        2. Resample from src_sample_rate to tgt_sample_rate (only if they differ)
         3. Adjust channels (pad or truncate to num_channels)
         4. Reshape time points into patches
+        
+        Note: Resampling is skipped if src_sample_rate == tgt_sample_rate (e.g., both 200Hz)
         
         Args:
             eeg: EEG tensor from GLIM dataloader (batch_size, seq_len, channels)
@@ -238,10 +240,14 @@ class SentimentCLSCBraMod(L.LightningModule):
         # Transpose to (batch_size, channels, seq_len)
         eeg = eeg.transpose(1, 2)  # (batch_size, channels, seq_len)
         
-        # Resample from src_sample_rate (128Hz) to tgt_sample_rate (200Hz)
-        # Calculate target length after resampling
-        tgt_seq_len = int(seq_len * self.tgt_sample_rate / self.src_sample_rate)
-        eeg = self._resample_eeg(eeg, seq_len, tgt_seq_len)
+        # Resample only if source and target sample rates differ
+        if self.src_sample_rate != self.tgt_sample_rate:
+            # Calculate target length after resampling
+            tgt_seq_len = int(seq_len * self.tgt_sample_rate / self.src_sample_rate)
+            eeg = self._resample_eeg(eeg, seq_len, tgt_seq_len)
+        else:
+            # No resampling needed
+            tgt_seq_len = seq_len
         
         # Adjust channels if needed
         if channels > self.num_channels:
@@ -456,7 +462,8 @@ class SentimentCLSCBraMod(L.LightningModule):
         if self.warm_up_step is not None:
             opt = torch.optim.Adam(
                 params,
-                lr=self.lr
+                lr=self.lr,
+                weight_decay=self.weight_decay
             )
             # Calculate total training steps (epochs * steps_per_epoch)
             # Note: estimated_steps uses max_epochs since steps_per_epoch varies by dataloader

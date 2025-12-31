@@ -44,6 +44,7 @@ class GLIM(L.LightningModule):
                  in_temporal_modulate: bool = True,
                  out_is_causal: bool = True,
                  prompt_tuning_len: bool = 0,
+                 use_prompt: bool = True,
                  num_heads = 8,
                  mlp_ratio = 4,
                  dropout = 0.0,
@@ -68,6 +69,7 @@ class GLIM(L.LightningModule):
         self.tgt_text_len = tgt_text_len
         self.prompt_tuning_len = prompt_tuning_len
         self.eval_pembed = evaluate_prompt_embed
+        self.use_prompt = use_prompt
 
         self.λ = clip_loss_weight
         self.ε = commitment_loss_weight
@@ -182,6 +184,12 @@ class GLIM(L.LightningModule):
         prompts = batch['prompt']  # NOTE: [tuple('task'), tuple('dataset'), tuple('subject')] after collate
         input_text = batch['input text']        # list[str]
         tgt_text = batch['target text']         # list[str]
+
+        # remove prompts if needed
+        if self.use_prompt is False:
+            batch_size = eeg.shape[0]
+            prompts = [['<UNK>'] * batch_size, ['<UNK>'] * batch_size, ['<UNK>'] * batch_size]
+
         # for logging and cal metrics
         sentiment_label = batch['sentiment label']      # list[str]
         raw_task_key = batch['raw task key']    # list[str]

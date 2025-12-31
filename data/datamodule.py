@@ -364,11 +364,11 @@ class ZuCoDataset(Dataset):
                  embeddings_dict: dict = None,
                  eval_noise_input: bool = False,
                  ):
-        # pt_target_keys = ['input text']
-        pt_target_keys = ['lexical simplification (v0)', 'lexical simplification (v1)', 
-                          'semantic clarity (v0)', 'semantic clarity (v1)', 
-                          'syntax simplification (v0)', 'syntax simplification (v1)',
-                          'naive rewritten', 'naive simplified']
+        pt_target_keys = ['input text']
+        # pt_target_keys = ['lexical simplification (v0)', 'lexical simplification (v1)', 
+        #                   'semantic clarity (v0)', 'semantic clarity (v1)', 
+        #                   'syntax simplification (v0)', 'syntax simplification (v1)',
+        #                   'naive rewritten', 'naive simplified']
         df = df[df['phase'] == phase]
         if phase == 'train':
             target_keys = pt_target_keys

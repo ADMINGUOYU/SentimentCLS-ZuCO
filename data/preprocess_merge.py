@@ -16,7 +16,7 @@ tmp_path = '/nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp'
 os.makedirs(tmp_path, exist_ok=True)
 
 # select specific subjects (None for all subjects)
-select_subjs = ['ZAB']
+select_subjs = None # ['ZAB']
 
 # Configuration constants
 TARGET_KEYS = [
@@ -97,6 +97,7 @@ print(f"Columns: {df_merged.columns.tolist()}")
 if select_subjs is not None:
     # process selection
     df_merged = df_merged[df_merged['subject'].isin(select_subjs)]
+print(f"Selected subj data: {df_merged.shape[0]} rows")
 
 # Save the merged dataframe
 save_location = tmp_path + '/zuco_merged.df'

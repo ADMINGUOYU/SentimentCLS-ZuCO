@@ -51,6 +51,7 @@ class SentimentCLSWithMLP(L.LightningModule):
         lr: float = 1e-4,
         weight_decay: float = 1e-4,
         freeze_encoder: bool = False,
+        use_prompt: bool = True,
         batch_size: int = 24
     ):
         super().__init__()
@@ -76,6 +77,7 @@ class SentimentCLSWithMLP(L.LightningModule):
         self.lr = lr
         self.weight_decay = weight_decay
         self.freeze_encoder = freeze_encoder
+        self.use_prompt = use_prompt
         
         # Freeze encoder if requested
         if self.freeze_encoder:
@@ -148,7 +150,12 @@ class SentimentCLSWithMLP(L.LightningModule):
         sentiment_ids = sentiment_ids.to(torch.int64)
         
         # Forward pass
-        logits = self(eeg, eeg_mask, prompts)
+        if self.use_prompt:
+            # assert
+            assert prompts is not None, "[ERROR] prompt should not be None"
+            logits = self(eeg, eeg_mask, prompts)
+        else:
+            logits = self(eeg, eeg_mask, None)
         
         # Calculate loss
         loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
@@ -198,7 +205,12 @@ class SentimentCLSWithMLP(L.LightningModule):
         sentiment_ids = sentiment_ids.to(torch.int64)
         
         # Forward pass
-        logits = self(eeg, eeg_mask, prompts)
+        if self.use_prompt:
+            # assert
+            assert prompts is not None, "[ERROR] prompt should not be None"
+            logits = self(eeg, eeg_mask, prompts)
+        else:
+            logits = self(eeg, eeg_mask, None)
         
         # Calculate loss
         loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
@@ -230,7 +242,12 @@ class SentimentCLSWithMLP(L.LightningModule):
         sentiment_ids = sentiment_ids.to(torch.int64)
         
         # Forward pass
-        logits = self(eeg, eeg_mask, prompts)
+        if self.use_prompt:
+            # assert
+            assert prompts is not None, "[ERROR] prompt should not be None"
+            logits = self(eeg, eeg_mask, prompts)
+        else:
+            logits = self(eeg, eeg_mask, None)
         
         # Calculate loss
         loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
@@ -284,7 +301,12 @@ class SentimentCLSWithMLP(L.LightningModule):
         prompts = batch['prompt']
         
         # Forward pass
-        logits = self(eeg, eeg_mask, prompts)
+        if self.use_prompt:
+            # assert
+            assert prompts is not None, "[ERROR] prompt should not be None"
+            logits = self(eeg, eeg_mask, prompts)
+        else:
+            logits = self(eeg, eeg_mask, None)
         probs = F.softmax(logits, dim=-1)
         preds = torch.argmax(probs, dim=1)
         
@@ -311,11 +333,10 @@ class SentimentCLSWithMLP(L.LightningModule):
         ], weight_decay=self.weight_decay)
         
         # Learning rate scheduler
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            mode='min',
-            factor=0.5,
-            patience=5
+            T_max=self.lr,
+            eta_min=1e-5
         )
         
         return {

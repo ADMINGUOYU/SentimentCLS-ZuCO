@@ -468,7 +468,7 @@ class SentimentCLSCBraMod(L.LightningModule):
                 weight_decay=self.weight_decay
             )
             # Get total training steps (accounts for dataloader size and epochs)
-            estimated_steps = self.trainer.estimated_stepping_batches
+            estimated_steps = self.trainer.max_epochs # !!!! [WARNING] self.trainer.estimated_stepping_batches
             lr_scheduler = get_cosine_schedule_with_warmup(
                 opt,
                 num_warmup_steps=self.warm_up_step,

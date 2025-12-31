@@ -67,6 +67,11 @@ def parse_args():
         action='store_true',
         help='Freeze GLIM encoder weights (only train MLP)'
     )
+    parser.add_argument(
+        '--do_not_use_prompt',
+        action='store_true',
+        help='Whether or not to use prompt embeddings'
+    )
     
     # Training arguments
     parser.add_argument(
@@ -296,6 +301,7 @@ def main():
     print(f"Learning rate: {args.lr}")
     print(f"Max epochs: {args.max_epochs}")
     print(f"Freeze encoder: {args.freeze_encoder}")
+    print(f"Use Prompt: {not args.do_not_use_prompt}")
     print("=" * 80)
     
     # Check if files exist
@@ -333,6 +339,7 @@ def main():
         lr=args.lr,
         weight_decay=args.weight_decay,
         freeze_encoder=args.freeze_encoder,
+        use_prompt=(not args.do_not_use_prompt),
         batch_size=args.batch_size
     )
     

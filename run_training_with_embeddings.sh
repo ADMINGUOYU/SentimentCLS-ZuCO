@@ -7,7 +7,7 @@ python train_with_embeddings.py \
   --embeddings_path /nfs/usrhome2/yguoco/checkpoints_sentiment_cls_with_mlp/tmp/embeddings.pickle \
   --use_sentence_embeddings \
   --eeg_emb_to_sentence_emb_hidden_dims 1024 512 \
-  --device 1 \
+  --device 3 \
   --batch_size 64 \
   --lr 2e-4 \
   --warm_up_step 10 \

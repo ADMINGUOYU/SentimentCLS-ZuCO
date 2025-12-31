@@ -16,12 +16,13 @@ python train_sentiment_cls_cbramod.py \
     --nhead 8 \
     --src_sample_rate 128 \
     --tgt_sample_rate 200 \
-    --hidden_dims 512 256 \
+    --hidden_dims 512 256 128 \
     --dropout 0.3 \
     --batch_size 64 \
     --val_batch_size 24 \
-    --lr 1e-4 \
+    --lr 2e-4 \
     --weight_decay 1e-4 \
+    --warm_up_step 10 \
     --max_epochs 50 \
     --log_dir ./logs_sentiment_cls_cbramod \
     --experiment_name sentiment_cls_cbramod \

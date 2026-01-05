@@ -6,10 +6,9 @@ import pickle
 import os
 
 data_dir = './datasets/ZuCo'
-zuco1_task1_lbl_path = data_dir + '/task_materials/sentiment_labels_task1.csv'
-zuco1_task2_lbl_path = data_dir + '/task_materials/relations_labels_task2.csv'
-zuco1_task3_lbl_path = data_dir + '/task_materials/relations_labels_task3.csv'
-zuco1_task1_mats_path = data_dir
+zuco1_task1_lbl_path = data_dir + '/revised_csv/sentiment_labels_task1.csv'
+zuco1_task2_lbl_path = data_dir + '/revised_csv/relations_labels_task2.csv'
+zuco1_task3_lbl_path = data_dir + '/revised_csv/relations_labels_task3.csv'
 
 # tmp path (saving path)
 # User can modify this path to save outputs to a different location

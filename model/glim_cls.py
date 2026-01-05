@@ -21,7 +21,6 @@ from copy import deepcopy
 from torchmetrics.functional.classification import multiclass_accuracy
 from sklearn.metrics import confusion_matrix
 from transformers import AutoTokenizer, T5ForConditionalGeneration, get_cosine_schedule_with_warmup
-from transformers.modeling_outputs import BaseModelOutput
 
 from .modules import PromptEmbedder, EEGEncoder, Aligner
 

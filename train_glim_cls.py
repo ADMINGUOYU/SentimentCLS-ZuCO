@@ -494,7 +494,7 @@ def main():
     if torch.cuda.is_available():
         device = [args.device]
     else:
-        device = 1
+        device = 'auto'
     
     trainer = L.Trainer(
         max_epochs=args.max_epochs,

@@ -21,6 +21,7 @@ from copy import deepcopy
 from torchmetrics.functional.classification import multiclass_accuracy
 from sklearn.metrics import confusion_matrix
 from transformers import AutoTokenizer, T5ForConditionalGeneration, get_cosine_schedule_with_warmup
+from transformers.modeling_outputs import BaseModelOutput
 
 from .modules import PromptEmbedder, EEGEncoder, Aligner
 
@@ -56,6 +57,7 @@ class GLIM_CLS(L.LightningModule):
         mlp_ratio: MLP expansion ratio (default: 4)
         dropout: Dropout rate (default: 0.0)
         clip_loss_weight: Weight for contrastive loss (default: 0.5)
+        lm_loss_weight: Weight for language model loss (default: 0.0)
         commitment_loss_weight: Weight for commitment loss (default: 0.0)
         commitment_loss_key: Type of commitment loss ('mse' or 'kl_div')
         use_y_mask: Whether to use mask for alignment (default: False)
@@ -83,6 +85,7 @@ class GLIM_CLS(L.LightningModule):
                  input_eeg_len: int = 1280,
                  hidden_eeg_len: int = 96,
                  input_text_len: int = 96,
+                 tgt_text_len: int = 64,
                  input_dim: int = 128,
                  hidden_dim: int = 128,
                  embed_dim: int = 1024,
@@ -99,6 +102,7 @@ class GLIM_CLS(L.LightningModule):
                  mlp_ratio: int = 4,
                  dropout: float = 0.0,
                  clip_loss_weight: float = 0.5,
+                 lm_loss_weight: float = 0.0,
                  commitment_loss_weight: float = 0.0,
                  commitment_loss_key: Literal['mse', 'kl_div'] = 'mse',
                  use_y_mask: bool = False,
@@ -127,6 +131,7 @@ class GLIM_CLS(L.LightningModule):
         
         # Store core parameters
         self.input_text_len = input_text_len
+        self.tgt_text_len = tgt_text_len
         self.eval_pembed = evaluate_prompt_embed
         self.use_prompt = use_prompt
         self.embed_dim = embed_dim
@@ -135,6 +140,7 @@ class GLIM_CLS(L.LightningModule):
         
         # Loss weights
         self.clip_loss_weight = clip_loss_weight
+        self.lm_loss_weight = lm_loss_weight
         self.commitment_loss_weight = commitment_loss_weight
         self.mlp_loss_weight = mlp_loss_weight
         
@@ -288,6 +294,17 @@ class GLIM_CLS(L.LightningModule):
         hidden_states = outputs['last_hidden_state']
         return hidden_states, src_mask
     
+    def text_decoder_forward(self, src_embeds, src_mask, tgt_ids):
+        """Compute language model loss using the T5 decoder."""
+        labels = tgt_ids.detach().clone()
+        labels.masked_fill_(labels == self.text_model.config.pad_token_id, -100)
+        mask = src_mask if (self.use_y_mask and self.training) else None
+        outputs = self.text_model(encoder_outputs=BaseModelOutput(src_embeds),
+                                  attention_mask=mask,
+                                  labels=labels)
+        loss = outputs['loss']
+        return loss
+    
     def extract_embeddings(self, eeg, eeg_mask=None, prompts=None):
         """
         Extract EEG embeddings with gradients enabled for end-to-end training.
@@ -338,6 +355,7 @@ class GLIM_CLS(L.LightningModule):
         eeg_mask = batch['mask']
         prompts = batch['prompt']
         input_text = batch['input text']
+        target_text = batch['target text']
         
         # Get classification labels using configurable key
         classification_label = batch[self.classification_label_key]
@@ -362,12 +380,20 @@ class GLIM_CLS(L.LightningModule):
         (loss_clip, logits_clip, loss_commitment,
          eeg_embeds, eeg_emb, input_text_emb) = self.aligner.forward(eeg_hiddens, input_text_embeds, hidden_text_mask)
         
+        # Language model loss (if weight > 0)
+        if self.lm_loss_weight > 0:
+            tgt_ids, _ = self.tokenize(target_text, self.tgt_text_len)
+            loss_lm = self.text_decoder_forward(eeg_embeds, hidden_text_mask, tgt_ids)
+        else:
+            loss_lm = torch.tensor(0.0, device=self.device)
+        
         # MLP classification
         logits = self.mlp_classifier(eeg_emb)
         loss_mlp = F.cross_entropy(logits, classification_ids, ignore_index=-1)
         
         # Total loss
         loss = (loss_clip * self.clip_loss_weight +
+                loss_lm * self.lm_loss_weight +
                 loss_commitment * self.commitment_loss_weight +
                 loss_mlp * self.mlp_loss_weight)
         
@@ -383,6 +409,7 @@ class GLIM_CLS(L.LightningModule):
         return {
             'total_loss': loss,
             'loss_clip': loss_clip,
+            'loss_lm': loss_lm,
             'loss_commitment': loss_commitment,
             'loss_mlp': loss_mlp,
             'acc': acc,
@@ -396,6 +423,7 @@ class GLIM_CLS(L.LightningModule):
         
         loss = output['total_loss']
         loss_clip = output['loss_clip']
+        loss_lm = output['loss_lm']
         loss_commitment = output['loss_commitment']
         loss_mlp = output['loss_mlp']
         acc = output['acc']
@@ -403,6 +431,7 @@ class GLIM_CLS(L.LightningModule):
         self.log('train/loss', loss, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         self.log('train/accuracy', acc, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         self.log('train/loss_clip', loss_clip, sync_dist=True, batch_size=self.batch_size)
+        self.log('train/loss_lm', loss_lm, sync_dist=True, batch_size=self.batch_size)
         self.log('train/loss_commitment', loss_commitment, sync_dist=True, batch_size=self.batch_size)
         self.log('train/loss_mlp', loss_mlp, sync_dist=True, batch_size=self.batch_size)
         
@@ -415,6 +444,7 @@ class GLIM_CLS(L.LightningModule):
         
         loss = output['total_loss']
         loss_clip = output['loss_clip']
+        loss_lm = output['loss_lm']
         loss_commitment = output['loss_commitment']
         loss_mlp = output['loss_mlp']
         acc = output['acc']
@@ -422,6 +452,7 @@ class GLIM_CLS(L.LightningModule):
         self.log('val/loss', loss, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         self.log('val/accuracy', acc, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         self.log('val/loss_clip', loss_clip, sync_dist=True, batch_size=self.batch_size)
+        self.log('val/loss_lm', loss_lm, sync_dist=True, batch_size=self.batch_size)
         self.log('val/loss_commitment', loss_commitment, sync_dist=True, batch_size=self.batch_size)
         self.log('val/loss_mlp', loss_mlp, sync_dist=True, batch_size=self.batch_size)
         

@@ -9,6 +9,8 @@ This script trains the combined GLIM encoder + MLP classifier model with:
 """
 
 import os
+import sys
+import atexit
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -26,6 +28,41 @@ from lightning.pytorch.callbacks import (
 
 from data.datamodule import GLIMDataModule
 from model.glim_cls import GLIM_CLS
+
+
+class TeeLogger:
+    """Logger that writes to both stdout/stderr and a file.
+    
+    Automatically closes the file on program exit.
+    """
+    _instances = []
+    
+    def __init__(self, filename, stream):
+        self.terminal = stream
+        self.log = open(filename, 'w')
+        TeeLogger._instances.append(self)
+    
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+    
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+    
+    def close(self):
+        if self.log and not self.log.closed:
+            self.log.close()
+    
+    @classmethod
+    def close_all(cls):
+        for instance in cls._instances:
+            instance.close()
+
+
+# Register cleanup function to close log files on exit
+atexit.register(TeeLogger.close_all)
 
 # Configuration constants
 SUPPORTED_TEXT_MODELS = [
@@ -155,6 +192,12 @@ def parse_args():
         help='Weight for contrastive (CLIP) loss'
     )
     parser.add_argument(
+        '--lm_loss_weight',
+        type=float,
+        default=0.0,
+        help='Weight for language model loss'
+    )
+    parser.add_argument(
         '--commitment_loss_weight',
         type=float,
         default=0.0,
@@ -211,20 +254,14 @@ def parse_args():
     parser.add_argument(
         '--log_dir',
         type=str,
-        default='./logs_glim_cls',
-        help='Directory for TensorBoard logs'
+        default='./logs',
+        help='Base directory for logs (TensorBoard logs and checkpoints will be saved here)'
     )
     parser.add_argument(
         '--experiment_name',
         type=str,
         default='glim_cls',
         help='Name of the experiment'
-    )
-    parser.add_argument(
-        '--checkpoint_dir',
-        type=str,
-        default='./checkpoints_glim_cls',
-        help='Directory to save model checkpoints'
     )
     
     # Hardware arguments
@@ -364,12 +401,30 @@ def main():
     
     L.seed_everything(args.seed, workers=True)
     
-    Path(args.log_dir).mkdir(parents=True, exist_ok=True)
-    Path(args.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    # Create timestamp for this run
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_name = f'{args.experiment_name}_{timestamp}'
+    
+    # Set up directory structure: ./logs/<experiment_name>_<timestamp>/
+    # - tensorboard/  (TensorBoard logs)
+    # - checkpoints/  (Model checkpoints)
+    # - training.log  (Console output log)
+    run_dir = os.path.join(args.log_dir, run_name)
+    tensorboard_dir = os.path.join(run_dir, 'tensorboard')
+    checkpoint_dir = os.path.join(run_dir, 'checkpoints')
+    log_file = os.path.join(run_dir, 'training.log')
+    
+    Path(tensorboard_dir).mkdir(parents=True, exist_ok=True)
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Set up file logging using TeeLogger (defined at module level)
+    sys.stdout = TeeLogger(log_file, sys.stdout)
+    sys.stderr = TeeLogger(log_file.replace('.log', '_error.log'), sys.stderr)
     
     print("=" * 80)
     print("GLIM_CLS Training (Combined GLIM Encoder + MLP Classifier)")
     print("=" * 80)
+    print(f"Run directory: {run_dir}")
     print(f"Data path: {args.data_path}")
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Classification label key: {args.classification_label_key}")
@@ -381,7 +436,7 @@ def main():
     print(f"Max epochs: {args.max_epochs}")
     print(f"Freeze encoder: {args.freeze_encoder}")
     print(f"Use Prompt: {not args.do_not_use_prompt}")
-    print(f"Loss weights - clip: {args.clip_loss_weight}, commitment: {args.commitment_loss_weight}, mlp: {args.mlp_loss_weight}")
+    print(f"Loss weights - clip: {args.clip_loss_weight}, lm: {args.lm_loss_weight}, commitment: {args.commitment_loss_weight}, mlp: {args.mlp_loss_weight}")
     print("=" * 80)
     
     if not os.path.exists(args.data_path):
@@ -435,6 +490,7 @@ def main():
             
             # Loss weights
             clip_loss_weight=args.clip_loss_weight,
+            lm_loss_weight=args.lm_loss_weight,
             commitment_loss_weight=args.commitment_loss_weight,
             mlp_loss_weight=args.mlp_loss_weight,
             
@@ -454,19 +510,20 @@ def main():
     else:
         print(f"  Encoder: TRAINABLE (fine-tuning with 10x lower LR)")
     
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    version_name = f'{args.experiment_name}_{timestamp}'
+    # Set up TensorBoard logger (inside tensorboard/ subdirectory)
     logger = TensorBoardLogger(
-        save_dir=args.log_dir,
-        name=args.experiment_name,
-        version=version_name,
+        save_dir=tensorboard_dir,
+        name='',
+        version='',
         default_hp_metric=False
     )
-    print(f"\nTensorBoard logs: {logger.log_dir}")
+    print(f"\nTensorBoard logs: {tensorboard_dir}")
+    print(f"Checkpoints: {checkpoint_dir}")
+    print(f"Training log: {log_file}")
     
     callbacks = [
         ModelCheckpoint(
-            dirpath=os.path.join(args.checkpoint_dir, args.experiment_name),
+            dirpath=checkpoint_dir,
             filename='model-{epoch:02d}-{val/accuracy:.4f}',
             monitor='val/accuracy',
             mode='max',

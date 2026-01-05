@@ -46,8 +46,6 @@ for idx in range(len(merged_df)):
     for key in TARGET_KEYS:
         merged_df.loc[idx, key] = variants.iloc[index][key]
 
-print(merged_df.iloc[99])
-raise "STOP"
 # Save the merged dataframe
 save_location = tmp_path + '/zuco_merged_with_variants.df'
 pd.to_pickle(merged_df, save_location)

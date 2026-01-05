@@ -39,6 +39,10 @@ class SentimentCLSWithMLP(L.LightningModule):
         lr: Learning rate (default: 1e-4)
         weight_decay: Weight decay for optimizer (default: 1e-4)
         freeze_encoder: If True, freeze GLIM encoder weights (default: False)
+        clip_loss_weight: contrast loss weight
+        lm_loss_weight: lm loss weight
+        commitment_loss_weight: mse loss weight
+        mlp_loss_weight: classification mlp loss weight
     """
     
     def __init__(
@@ -51,7 +55,10 @@ class SentimentCLSWithMLP(L.LightningModule):
         lr: float = 1e-4,
         weight_decay: float = 1e-4,
         freeze_encoder: bool = False,
-        use_prompt: bool = True,
+        clip_loss_weight = 0.5,
+        lm_loss_weight = 0.5,
+        commitment_loss_weight = 0.0,
+        mlp_loss_weight = 0.5,
         batch_size: int = 24
     ):
         super().__init__()
@@ -77,7 +84,12 @@ class SentimentCLSWithMLP(L.LightningModule):
         self.lr = lr
         self.weight_decay = weight_decay
         self.freeze_encoder = freeze_encoder
-        self.use_prompt = use_prompt
+
+        # loss weights
+        self.clip_loss_weight = clip_loss_weight
+        self.lm_loss_weight = lm_loss_weight
+        self.commitment_loss_weight = commitment_loss_weight
+        self.mlp_loss_weight = mlp_loss_weight
         
         # Freeze encoder if requested
         if self.freeze_encoder:
@@ -90,9 +102,6 @@ class SentimentCLSWithMLP(L.LightningModule):
         
         # Define sentiment labels
         self.sentiment_labels = ['negative', 'neutral', 'positive']
-        
-        # Initialize lists to accumulate training metrics per epoch
-        self.training_step_outputs = []
         
         # Initialize lists to accumulate test predictions and targets for confusion matrix
         self.test_step_outputs = []
@@ -138,28 +147,47 @@ class SentimentCLSWithMLP(L.LightningModule):
         
         return logits
     
-    def training_step(self, batch, batch_idx):
-        """Training step."""
-        eeg = batch['eeg']  # (batch_size, seq_len, channels)
-        eeg_mask = batch['mask']  # (batch_size, seq_len)
-        prompts = batch['prompt']  # list of tuples
+    def encode_labels(self, labels:list[str], ignore_idx=-1):
+        label_ids = []
+        for label in labels:
+            if label in self.sentiment_labels:
+                label_id = self.sentiment_labels.index(label)
+            else:
+                # Handle any unexpected labels
+                label_id = ignore_idx
+            label_ids.append(label_id)
+        label_ids = torch.tensor(label_ids, dtype=torch.int, device=self.device)
+        return label_ids
+
+    def shared_forward(self, batch):
+        # get sentiment labels for classification
         sentiment_label = batch['sentiment label']  # list of strings
+        # !!! set whether to use prompt in glim model
         
         # Encode sentiment labels
-        sentiment_ids = self.glim_encoder.encode_labels(sentiment_label)
+        sentiment_ids = self.encode_labels(sentiment_label)
         sentiment_ids = sentiment_ids.to(torch.int64)
         
-        # Forward pass
-        if self.use_prompt:
-            # assert
-            assert prompts is not None, "[ERROR] prompt should not be None"
-            logits = self(eeg, eeg_mask, prompts)
-        else:
-            logits = self(eeg, eeg_mask, None)
+        # Forward pass GLIM
+        shared_outputs = self.glim_encoder.shared_forward(batch)
+        loss_commitment = shared_outputs['loss_commitment']     # (1)
+        loss_clip = shared_outputs['loss_clip']                 # (1)
+        loss_lm = shared_outputs['loss_lm']                     # (1)
+        eeg_emb = shared_outputs['eeg_emb_vector']
+
+        # pass mlp
+        logits = self.mlp_classifier(eeg_emb)
         
-        # Calculate loss
-        loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
+        # Calculate mlp loss
+        loss_mlp = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
         
+        # calculate total loss
+        loss = \
+        loss_clip * self.clip_loss_weight + \
+        loss_lm * self.lm_loss_weight + \
+        loss_commitment * self.commitment_loss_weight + \
+        loss_mlp * self.mlp_loss_weight
+
         # Calculate accuracy
         acc = multiclass_accuracy(
             logits, sentiment_ids, 
@@ -168,101 +196,88 @@ class SentimentCLSWithMLP(L.LightningModule):
             ignore_index=-1,
             top_k=1
         )
+
+        # return dict
+        output = {
+            'total_loss' : loss,
+            'loss_clip' : loss_clip,
+            'loss_lm' : loss_lm,
+            'loss_commitment' : loss_commitment,
+            'loss_mlp' : loss_mlp,
+            'acc' : acc,
+            'logits' : logits
+        }
         
-        # Store metrics for epoch-level logging
-        self.training_step_outputs.append({
-            'loss': loss.detach(),
-            'accuracy': acc.detach()
-        })
-        
+        return output
+
+    def training_step(self, batch, batch_idx):
+        """Training step."""
+
+        # forward
+        output  = self.shared_forward(batch)
+
+        # get metrics
+        loss = output['total_loss']
+        loss_clip = output['loss_clip']
+        loss_lm = output['loss_lm']
+        loss_commitment = output['loss_commitment']
+        loss_mlp = output['loss_mlp']
+        acc = output['acc']
+
+        # Log to metrics
+        self.log('train/loss', loss, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('train/accuracy', acc, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('train/loss_clip', loss_clip, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('train/loss_lm', loss_lm, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('train/loss_commitment', loss_commitment, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('train/loss_mlp', loss_mlp, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+
+        # return loss
         return loss
-    
-    def on_train_epoch_end(self):
-        """Compute and log average metrics at the end of each training epoch."""
-        if len(self.training_step_outputs) == 0:
-            return
-        
-        # Compute average loss and accuracy
-        avg_loss = torch.stack([x['loss'] for x in self.training_step_outputs]).mean()
-        avg_acc = torch.stack([x['accuracy'] for x in self.training_step_outputs]).mean()
-        
-        # Log to tensorboard
-        self.log('train/loss', avg_loss, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
-        self.log('train/accuracy', avg_acc, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
-        
-        # Clear for next epoch
-        self.training_step_outputs.clear()
     
     def validation_step(self, batch, batch_idx):
         """Validation step."""
-        eeg = batch['eeg']
-        eeg_mask = batch['mask']
-        prompts = batch['prompt']
-        sentiment_label = batch['sentiment label']
         
-        # Encode sentiment labels
-        sentiment_ids = self.glim_encoder.encode_labels(sentiment_label)
-        sentiment_ids = sentiment_ids.to(torch.int64)
-        
-        # Forward pass
-        if self.use_prompt:
-            # assert
-            assert prompts is not None, "[ERROR] prompt should not be None"
-            logits = self(eeg, eeg_mask, prompts)
-        else:
-            logits = self(eeg, eeg_mask, None)
-        
-        # Calculate loss
-        loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
-        
-        # Calculate accuracy
-        acc = multiclass_accuracy(
-            logits, sentiment_ids,
-            average='micro',
-            num_classes=self.num_classes,
-            ignore_index=-1,
-            top_k=1
-        )
-        
-        # Log metrics
+        with torch.no_grad():
+            # forward
+            output  = self.shared_forward(batch)
+
+        # get metrics
+        loss = output['total_loss']
+        loss_clip = output['loss_clip']
+        loss_lm = output['loss_lm']
+        loss_commitment = output['loss_commitment']
+        loss_mlp = output['loss_mlp']
+        acc = output['acc']
+
+        # Log to metrics
         self.log('val/loss', loss, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         self.log('val/accuracy', acc, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('val/loss_clip', loss_clip, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('val/loss_lm', loss_lm, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('val/loss_commitment', loss_commitment, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('val/loss_mlp', loss_mlp, prog_bar=True, sync_dist=True, batch_size=self.batch_size)
         
         return loss
     
     def test_step(self, batch, batch_idx):
         """Test step."""
-        eeg = batch['eeg']
-        eeg_mask = batch['mask']
-        prompts = batch['prompt']
-        sentiment_label = batch['sentiment label']
-        
-        # Encode sentiment labels
-        sentiment_ids = self.glim_encoder.encode_labels(sentiment_label)
-        sentiment_ids = sentiment_ids.to(torch.int64)
-        
-        # Forward pass
-        if self.use_prompt:
-            # assert
-            assert prompts is not None, "[ERROR] prompt should not be None"
-            logits = self(eeg, eeg_mask, prompts)
-        else:
-            logits = self(eeg, eeg_mask, None)
-        
-        # Calculate loss
-        loss = F.cross_entropy(logits, sentiment_ids, ignore_index=-1)
-        
-        # Calculate accuracy
-        acc = multiclass_accuracy(
-            logits, sentiment_ids,
-            average='micro',
-            num_classes=self.num_classes,
-            ignore_index=-1,
-            top_k=1
-        )
-        
+        with torch.no_grad():
+            # forward
+            output  = self.shared_forward(batch)
+
+        # get metrics
+        loss = output['total_loss']
+        acc = output['acc']
+        logits = output['logits']
+    
         # Get predictions
         preds = torch.argmax(logits, dim=1)
+        # get sentiment labels for classification
+        sentiment_label = batch['sentiment label']  # list of strings
+        # Encode sentiment labels
+        sentiment_ids = self.encode_labels(sentiment_label)
+        sentiment_ids = sentiment_ids.to(torch.int64)
         
         # Log metrics
         self.log('test/loss', loss, sync_dist=True, batch_size=self.batch_size)
@@ -301,7 +316,7 @@ class SentimentCLSWithMLP(L.LightningModule):
         prompts = batch['prompt']
         
         # Forward pass
-        if self.use_prompt:
+        if self.glim_encoder.use_prompt:
             # assert
             assert prompts is not None, "[ERROR] prompt should not be None"
             logits = self(eeg, eeg_mask, prompts)

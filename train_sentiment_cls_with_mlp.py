@@ -26,6 +26,22 @@ from lightning.pytorch.callbacks import (
 
 from data.datamodule import GLIMDataModule
 from model.sentiment_cls_with_mlp import SentimentCLSWithMLP
+from model.glim import GLIM
+
+# Configuration constants (same as train_with_embeddings.py)
+SUPPORTED_TEXT_MODELS = [
+    'google/flan-t5-xl',
+    'google/flan-t5-large',
+    'facebook/bart-large-cnn',
+    'jbochi/madlad400-3b-mt'
+]
+
+# Model defaults
+DEFAULT_INPUT_EEG_LEN = 1280
+DEFAULT_HIDDEN_EEG_LEN = 96
+DEFAULT_INPUT_TEXT_LEN = 96
+DEFAULT_TGT_TEXT_LEN = 64
+DEFAULT_INPUT_DIM = 128
 
 
 def parse_args():
@@ -44,11 +60,68 @@ def parse_args():
     parser.add_argument(
         '--glim_checkpoint',
         type=str,
-        required=True,
-        help='Path to pre-trained GLIM checkpoint for initialization'
+        default=None,
+        help='Path to pre-trained GLIM checkpoint for initialization (optional)'
     )
     
-    # Model arguments
+    # GLIM model arguments (used when glim_checkpoint is not provided)
+    parser.add_argument(
+        '--text_model',
+        type=str,
+        default='google/flan-t5-large',
+        choices=SUPPORTED_TEXT_MODELS,
+        help='Pre-trained text model to use'
+    )
+    parser.add_argument(
+        '--hidden_dim',
+        type=int,
+        default=128,
+        help='Hidden dimension size for GLIM'
+    )
+    parser.add_argument(
+        '--embed_dim',
+        type=int,
+        default=1024,
+        help='Embedding dimension size for GLIM'
+    )
+    parser.add_argument(
+        '--n_in_blocks',
+        type=int,
+        default=6,
+        help='Number of encoder blocks'
+    )
+    parser.add_argument(
+        '--n_out_blocks',
+        type=int,
+        default=6,
+        help='Number of decoder blocks'
+    )
+    parser.add_argument(
+        '--num_heads',
+        type=int,
+        default=8,
+        help='Number of attention heads'
+    )
+    parser.add_argument(
+        '--glim_dropout',
+        type=float,
+        default=0.1,
+        help='Dropout rate for GLIM'
+    )
+    parser.add_argument(
+        '--warm_up_step',
+        type=int,
+        default=0,
+        help='Warm up step for Cosine loss (0 means no warm-up)'
+    )
+    parser.add_argument(
+        '--full_val_interval',
+        type=int,
+        default=10,
+        help='Interval for full validation with generation'
+    )
+    
+    # MLP classifier arguments
     parser.add_argument(
         '--hidden_dims',
         type=int,
@@ -60,7 +133,7 @@ def parse_args():
         '--dropout',
         type=float,
         default=0.3,
-        help='Dropout rate'
+        help='Dropout rate for MLP classifier'
     )
     parser.add_argument(
         '--freeze_encoder',
@@ -71,6 +144,32 @@ def parse_args():
         '--do_not_use_prompt',
         action='store_true',
         help='Whether or not to use prompt embeddings'
+    )
+    
+    # Loss weight arguments
+    parser.add_argument(
+        '--clip_loss_weight',
+        type=float,
+        default=0.5,
+        help='Weight for contrastive (CLIP) loss'
+    )
+    parser.add_argument(
+        '--lm_loss_weight',
+        type=float,
+        default=0.5,
+        help='Weight for language model loss'
+    )
+    parser.add_argument(
+        '--commitment_loss_weight',
+        type=float,
+        default=0.0,
+        help='Weight for commitment loss'
+    )
+    parser.add_argument(
+        '--mlp_loss_weight',
+        type=float,
+        default=0.5,
+        help='Weight for MLP classification loss'
     )
     
     # Training arguments
@@ -302,13 +401,14 @@ def main():
     print(f"Max epochs: {args.max_epochs}")
     print(f"Freeze encoder: {args.freeze_encoder}")
     print(f"Use Prompt: {not args.do_not_use_prompt}")
+    print(f"Loss weights - clip: {args.clip_loss_weight}, lm: {args.lm_loss_weight}, commitment: {args.commitment_loss_weight}, mlp: {args.mlp_loss_weight}")
     print("=" * 80)
     
     # Check if files exist
     if not os.path.exists(args.data_path):
         raise FileNotFoundError(f"Data file not found: {args.data_path}")
     
-    if not os.path.exists(args.glim_checkpoint):
+    if args.glim_checkpoint is not None and not os.path.exists(args.glim_checkpoint):
         raise FileNotFoundError(f"GLIM checkpoint not found: {args.glim_checkpoint}")
     
     # Initialize data module with weighted sampling enabled by default
@@ -329,17 +429,60 @@ def main():
     
     # Initialize model
     print("\nInitializing end-to-end sentiment classifier...")
-    print(f"Loading GLIM encoder from: {args.glim_checkpoint}")
+    
+    # Either load from checkpoint or create a new GLIM model
+    glim_model = None
+    if args.glim_checkpoint is not None:
+        print(f"Loading GLIM encoder from checkpoint: {args.glim_checkpoint}")
+    else:
+        print("Creating new GLIM model (using text encoder for alignment)...")
+        print(f"  Text model: {args.text_model}")
+        print(f"  Hidden dim: {args.hidden_dim}")
+        print(f"  Embed dim: {args.embed_dim}")
+        print(f"  N in blocks: {args.n_in_blocks}")
+        print(f"  N out blocks: {args.n_out_blocks}")
+        print(f"  Num heads: {args.num_heads}")
+        print(f"  GLIM dropout: {args.glim_dropout}")
+        print(f"  Use prompt: {not args.do_not_use_prompt}")
+        
+        glim_model = GLIM(
+            input_eeg_len=DEFAULT_INPUT_EEG_LEN,
+            hidden_eeg_len=DEFAULT_HIDDEN_EEG_LEN,
+            input_text_len=DEFAULT_INPUT_TEXT_LEN,
+            tgt_text_len=DEFAULT_TGT_TEXT_LEN,
+            input_dim=DEFAULT_INPUT_DIM,
+            hidden_dim=args.hidden_dim,
+            embed_dim=args.embed_dim,
+            text_model_id=args.text_model,
+            n_in_blocks=args.n_in_blocks,
+            n_out_blocks=args.n_out_blocks,
+            num_heads=args.num_heads,
+            dropout=args.glim_dropout,
+            clip_loss_weight=args.clip_loss_weight,
+            bsz_train=args.batch_size,
+            bsz_val=args.val_batch_size,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            warm_up_step=args.warm_up_step if args.warm_up_step > 0 else None,
+            full_val_interval=args.full_val_interval,
+            use_prompt=(not args.do_not_use_prompt)
+        )
+
+    glim_model.setup(None)
     
     model = SentimentCLSWithMLP(
         glim_checkpoint=args.glim_checkpoint,
+        glim_model=glim_model,
         hidden_dims=args.hidden_dims,
         num_classes=3,
         dropout=args.dropout,
         lr=args.lr,
         weight_decay=args.weight_decay,
         freeze_encoder=args.freeze_encoder,
-        use_prompt=(not args.do_not_use_prompt),
+        clip_loss_weight=args.clip_loss_weight,
+        lm_loss_weight=args.lm_loss_weight,
+        commitment_loss_weight=args.commitment_loss_weight,
+        mlp_loss_weight=args.mlp_loss_weight,
         batch_size=args.batch_size
     )
     

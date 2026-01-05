@@ -129,7 +129,7 @@ class GLIM(L.LightningModule):
         self.tokenizer = AutoTokenizer.from_pretrained(self.text_model_id)
         self.text_model = T5ForConditionalGeneration.from_pretrained(
             self.text_model_id, device_map = self.device,
-            torch_dtype = torch.bfloat16, # FIXME
+            # torch_dtype = torch.bfloat16, # FIXME
             ).requires_grad_(False)
         assert self.embed_dim == self.text_model.config.d_model
 

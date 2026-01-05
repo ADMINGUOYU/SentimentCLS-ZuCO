@@ -58,12 +58,6 @@ def parse_args():
         help='Path to the merged dataset pickle file'
     )
     parser.add_argument(
-        '--embeddings_path',
-        type=str,
-        default=None,
-        help='Path to the embeddings pickle file (optional, for sentence embedding alignment)'
-    )
-    parser.add_argument(
         '--glim_checkpoint',
         type=str,
         default=None,
@@ -115,22 +109,10 @@ def parse_args():
         help='Dropout rate for GLIM'
     )
     parser.add_argument(
-        '--use_sentence_embeddings',
-        action='store_true',
-        help='Use precomputed sentence embeddings for alignment instead of text encoder'
-    )
-    parser.add_argument(
-        '--eeg_emb_to_sentence_emb_hidden_dims',
-        type=int,
-        nargs='+',
-        default=[1024, 512],
-        help='Hidden layer dimensions for converting eeg embeddings to sentence embeddings\' dimension'
-    )
-    parser.add_argument(
         '--warm_up_step',
         type=int,
         default=0,
-        help='Warm up step for Cosine loss'
+        help='Warm up step for Cosine loss (0 means no warm-up)'
     )
     parser.add_argument(
         '--full_val_interval',
@@ -412,7 +394,6 @@ def main():
     print("End-to-End Sentiment Classification Training (GLIM + MLP)")
     print("=" * 80)
     print(f"Data path: {args.data_path}")
-    print(f"Embeddings path: {args.embeddings_path}")
     print(f"GLIM checkpoint: {args.glim_checkpoint}")
     print(f"Hidden dims: {args.hidden_dims}")
     print(f"Batch size: {args.batch_size}")
@@ -420,7 +401,6 @@ def main():
     print(f"Max epochs: {args.max_epochs}")
     print(f"Freeze encoder: {args.freeze_encoder}")
     print(f"Use Prompt: {not args.do_not_use_prompt}")
-    print(f"Use sentence embeddings: {args.use_sentence_embeddings}")
     print(f"Loss weights - clip: {args.clip_loss_weight}, lm: {args.lm_loss_weight}, commitment: {args.commitment_loss_weight}, mlp: {args.mlp_loss_weight}")
     print("=" * 80)
     
@@ -435,7 +415,6 @@ def main():
     print("\nInitializing data module with weighted sampling...")
     datamodule = GLIMDataModule(
         data_path=args.data_path,
-        embeddings_path=args.embeddings_path,
         eval_noise_input=False,
         bsz_train=args.batch_size,
         bsz_val=args.val_batch_size,
@@ -456,7 +435,7 @@ def main():
     if args.glim_checkpoint is not None:
         print(f"Loading GLIM encoder from checkpoint: {args.glim_checkpoint}")
     else:
-        print("Creating new GLIM model with semantic embedding alignment...")
+        print("Creating new GLIM model (using text encoder for alignment)...")
         print(f"  Text model: {args.text_model}")
         print(f"  Hidden dim: {args.hidden_dim}")
         print(f"  Embed dim: {args.embed_dim}")
@@ -464,8 +443,7 @@ def main():
         print(f"  N out blocks: {args.n_out_blocks}")
         print(f"  Num heads: {args.num_heads}")
         print(f"  GLIM dropout: {args.glim_dropout}")
-        print(f"  Use sentence embeddings: {args.use_sentence_embeddings}")
-        print(f"  EEG emb to sentence emb hidden dims: {args.eeg_emb_to_sentence_emb_hidden_dims}")
+        print(f"  Use prompt: {not args.do_not_use_prompt}")
         
         glim_model = GLIM(
             input_eeg_len=DEFAULT_INPUT_EEG_LEN,
@@ -487,8 +465,6 @@ def main():
             weight_decay=args.weight_decay,
             warm_up_step=args.warm_up_step if args.warm_up_step > 0 else None,
             full_val_interval=args.full_val_interval,
-            use_sentence_embeddings=args.use_sentence_embeddings,
-            eeg_emb_to_sentence_emb_proj_hidden=args.eeg_emb_to_sentence_emb_hidden_dims,
             use_prompt=(not args.do_not_use_prompt)
         )
     
